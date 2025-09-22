@@ -429,7 +429,7 @@ function_by_info(const struct Dwarf_Addrs *addrs, uintptr_t p, Dwarf_Off cu_offs
         uint64_t name = 0, form = 0, tag = 0;
 
         /* Find abbreviation in abbrev section */
-        /* UNSAFE Needs to be replaced */
+        /* LAB 2: added checking in cycle to avoid reading out of abbrev boundaries*/
         while (curr_abbrev_entry < addrs->abbrev_end) {
             curr_abbrev_entry += dwarf_read_uleb128(curr_abbrev_entry, &table_abbrev_code);
             curr_abbrev_entry += dwarf_read_uleb128(curr_abbrev_entry, &tag);
@@ -438,7 +438,9 @@ function_by_info(const struct Dwarf_Addrs *addrs, uintptr_t p, Dwarf_Off cu_offs
 
             /* Skip attributes */
             do {
+                if (curr_abbrev_entry >= addrs->abbrev_end) break;
                 curr_abbrev_entry += dwarf_read_uleb128(curr_abbrev_entry, &name);
+                if (curr_abbrev_entry >= addrs->abbrev_end) break; 
                 curr_abbrev_entry += dwarf_read_uleb128(curr_abbrev_entry, &form);
             } while (name != 0 || form != 0);
         }
