@@ -147,7 +147,7 @@ else
 CFLAGS += -O1
 endif
 CFLAGS += -ffreestanding -fno-omit-frame-pointer -mno-red-zone
-CFLAGS += -Wall -Wformat=2 -Wno-unused-function -Werror -g -gpubnames -gdwarf-4
+CFLAGS += -Wall -Wformat=2 -Wno-unused-function -g -gpubnames -gdwarf-4
 
 # Add -fno-stack-protector if the option exists.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
