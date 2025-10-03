@@ -115,7 +115,7 @@ InitGraphics (
   //
 
   UINT32 Suitable_Mode = 0;
-  UINTN MaxResolution = 0;
+  UINTN MinResolution = 10000000;
   UINTN CurResolution = 0;
 
   for (UINT32 ModeNumber = 0; ModeNumber < GraphicsOutput->Mode->MaxMode; ModeNumber++) {
@@ -131,8 +131,8 @@ InitGraphics (
 
     if (!EFI_ERROR(Status)) {
       CurResolution = Info->HorizontalResolution * Info->VerticalResolution;
-      if (CurResolution > MaxResolution && Info->HorizontalResolution <= 300 && Info->VerticalResolution <= 300) {
-        MaxResolution = CurResolution;
+      if (CurResolution < MinResolution) {
+        MinResolution = CurResolution;
         Suitable_Mode = ModeNumber;
       }
       gBS->FreePool(Info);
