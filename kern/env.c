@@ -381,6 +381,8 @@ csys_exit(void) {
 
 void
 csys_yield(struct Trapframe *tf) {
+    // int8_t status = rtc_check_status();
+    // pic_send_eoi(PIC_EOI);
     memcpy(&curenv->env_tf, tf, sizeof(struct Trapframe));
     sched_yield();
 }

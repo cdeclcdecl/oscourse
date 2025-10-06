@@ -22,11 +22,7 @@
 int mon_help(int argc, char **argv, struct Trapframe *tf);
 int mon_kerninfo(int argc, char **argv, struct Trapframe *tf);
 int mon_backtrace(int argc, char **argv, struct Trapframe *tf);
-<<<<<<< HEAD
-int mon_echo(int argc, char **argv, struct Trapframe *tf);
-=======
-int mon_dumpcmos(int argc, char **argv, struct Trapframe *tf);
->>>>>>> lab4
+int mon_dumpcmos(int argc, char ** argv, struct Trapframe *tf);
 
 struct Command {
     const char *name;
@@ -39,11 +35,7 @@ static struct Command commands[] = {
         {"help", "Display this list of commands", mon_help},
         {"kerninfo", "Display information about the kernel", mon_kerninfo},
         {"backtrace", "Print stack backtrace", mon_backtrace},
-<<<<<<< HEAD
-        {"echo", "Print arguments", mon_echo}
-=======
-        {"dumpcmos", "Display CMOS contents", mon_dumpcmos},
->>>>>>> lab4
+        {"dumpcmos", "Dump CMOS memory", mon_dumpcmos}
 };
 #define NCOMMANDS (sizeof(commands) / sizeof(commands[0]))
 
@@ -103,6 +95,16 @@ mon_dumpcmos(int argc, char **argv, struct Trapframe *tf) {
     // Hint: Use cmos_read8()/cmos_write8() functions.
     // LAB 4: Your code here
 
+    cprintf("CMOS memory dump:");
+
+    for (size_t i = 0; i < CMOS_SIZE; i++) {
+        if (!(i & 0x1111)) {
+            cprintf("\n%02lx: ", i);
+        }
+
+        cprintf("%02x ", cmos_read8(i));
+    }
+    cprintf("\n");
     return 0;
 }
 
