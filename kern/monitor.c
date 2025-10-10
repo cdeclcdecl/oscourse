@@ -12,6 +12,8 @@
 #include <kern/monitor.h>
 #include <kern/kclock.h>
 #include <kern/kdebug.h>
+#include <kern/tsc.h>
+#include <kern/timer.h>
 #include <kern/env.h>
 #include <kern/trap.h>
 
@@ -22,7 +24,14 @@
 int mon_help(int argc, char **argv, struct Trapframe *tf);
 int mon_kerninfo(int argc, char **argv, struct Trapframe *tf);
 int mon_backtrace(int argc, char **argv, struct Trapframe *tf);
+<<<<<<< HEAD
 int mon_dumpcmos(int argc, char ** argv, struct Trapframe *tf);
+=======
+int mon_dumpcmos(int argc, char **argv, struct Trapframe *tf);
+int mon_start(int argc, char **argv, struct Trapframe *tf);
+int mon_stop(int argc, char **argv, struct Trapframe *tf);
+int mon_frequency(int argc, char **argv, struct Trapframe *tf);
+>>>>>>> lab5
 
 struct Command {
     const char *name;
@@ -35,7 +44,14 @@ static struct Command commands[] = {
         {"help", "Display this list of commands", mon_help},
         {"kerninfo", "Display information about the kernel", mon_kerninfo},
         {"backtrace", "Print stack backtrace", mon_backtrace},
+<<<<<<< HEAD
         {"dumpcmos", "Dump CMOS memory", mon_dumpcmos}
+=======
+        {"dumpcmos", "Display CMOS contents", mon_dumpcmos},
+        {"timer_start", "Start timer", mon_start},
+        {"timer_stop", "Stop timer", mon_stop},
+        {"timer_freq", "Get timer frequency", mon_frequency},
+>>>>>>> lab5
 };
 #define NCOMMANDS (sizeof(commands) / sizeof(commands[0]))
 
@@ -82,6 +98,24 @@ int mon_echo(int argc, char **argv, struct Trapframe *tf) {
     for (size_t i = 1; i < argc; i++) {
         cprintf("%s%c", argv[i], i == argc - 1 ? '\n' : ' ');
     }
+    return 0;
+}
+
+/* Implement timer_start (mon_start), timer_stop (mon_stop), timer_freq (mon_frequency) commands. */
+// LAB 5: Your code here:
+
+int
+mon_start(int argc, char **argv, struct Trapframe *tf) {
+    return 0;
+}
+
+int
+mon_stop(int argc, char **argv, struct Trapframe *tf) {
+    return 0;
+}
+
+int
+mon_frequency(int argc, char **argv, struct Trapframe *tf) {
     return 0;
 }
 

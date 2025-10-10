@@ -10,6 +10,7 @@
 #include <kern/sched.h>
 #include <kern/kclock.h>
 #include <kern/picirq.h>
+#include <kern/timer.h>
 #include <kern/traceopt.h>
 
 static struct Taskstate ts;
@@ -97,6 +98,11 @@ extern void clock_thdlr(void);
 void
 trap_init(void) {
     // LAB 4: Your code here
+<<<<<<< HEAD
+=======
+    // LAB 5: Your code here
+
+>>>>>>> lab5
     /* Per-CPU setup */
     idt[IRQ_OFFSET + IRQ_CLOCK] = GATE(0, GD_KT, clock_thdlr, 0); 
     trap_init_percpu();
@@ -213,9 +219,14 @@ trap_dispatch(struct Trapframe *tf) {
         }
         return;
     case IRQ_OFFSET + IRQ_CLOCK:
+    case IRQ_OFFSET + IRQ_TIMER:
         // LAB 4: Your code here
+<<<<<<< HEAD
         rtc_timer_pic_handle();
         sched_yield();
+=======
+        // LAB 5: Your code here
+>>>>>>> lab5
         return;
     default:
         print_trapframe(tf);
