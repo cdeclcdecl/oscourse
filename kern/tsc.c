@@ -200,16 +200,47 @@ static uint64_t freq = 0;
 
 void
 timer_start(const char *name) {
-    (void)timer_started;
-    (void)timer_id;
-    (void)timer;
-    (void)freq;
+    //(void)timer_started;
+    //(void)timer_id;
+    //(void)timer;
+    //(void)freq;
+    // didnt get what these lines were supposed to do :(
+
+    for (int i = 0; i < MAX_TIMERS; i++) {
+        if (timertab[i].timer_name && !strncmp(name, timertab[i].timer_name, 6)) {
+            timer_id = i;
+            break;
+        }
+    }
+
+    if (timer_id == -1) {
+        print_timer_error();
+    }
+
+    timer_started = 1;
+    freq = timertab[timer_id].get_cpu_freq();
+    timer = read_tsc();
 }
 
 void
 timer_stop(void) {
+    if (!timer_started) {
+        print_timer_error();
+        return;
+    }
+
+    print_time((read_tsc() - timer) / freq);
+    timer_started = 0;
+    timer_id = -1;
 }
 
 void
 timer_cpu_frequency(const char *name) {
+    for (int i = 0; i < MAX_TIMERS; i++) {
+        if (timertab[i].timer_name && !strncmp(name, timertab[i].timer_name, 6)) {
+            cprintf("%lu\n", timertab[i].get_cpu_freq());
+        }
+    }
+
+    print_timer_error();
 }
