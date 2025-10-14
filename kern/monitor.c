@@ -122,7 +122,7 @@ int
 mon_frequency(int argc, char **argv, struct Trapframe *tf) {
     if (argc != 2) {
         return 1;
-    }
+    }   
 
     timer_cpu_frequency(argv[1]);
 

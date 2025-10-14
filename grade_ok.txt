@@ -1,0 +1,164 @@
+make clean
+make[1]: Entering directory '/home/cdecl/oscourse'
+rm -rf obj .gdbinit jos.in qemu.log LoaderPkg/Binaries/Loader-X64.efi LoaderPkg/UDK/Build/LoaderPkg LoaderPkg/ESP kern/kernel.ld
+make[1]: Leaving directory '/home/cdecl/oscourse'
+ARCHS=X64 ./grade-lab5 
+make[1]: Entering directory '/home/cdecl/oscourse'
++ as kern/bootstrap.S
++ as kern/entry.S
++ cc kern/init.c
++ cc kern/console.c
++ cc kern/dwarf.c
++ cc kern/dwarf_lines.c
++ cc kern/monitor.c
++ cc kern/env.c
++ cc kern/kclock.c
++ cc kern/picirq.c
++ cc kern/printf.c
++ cc kern/trap.c
++ as kern/trapentry.S
++ cc kern/timer.c
+kern/timer.c:134:87: warning: cast to 'void *' from smaller integer type 'uint32_t' (aka 'unsigned int') [-Wint-to-void-pointer-cast]
+  134 |         rsdt_ptr = (RSDT *)mmio_remap_last_region((physaddr_t)(rsd_ptr->RsdtAddress), (void *) (rsd_ptr->RsdtAddress), sizeof(RSDT), rsdt_ptr->h.Length);
+      |                                                                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
++ cc kern/sched.c
++ cc kern/kdebug.c
++ cc lib/printfmt.c
++ cc lib/readline.c
++ cc lib/string.c
++ cc kern/tsc.c
++ cc kern/uefi.c
++ as kern/uefiasm.S
++ cc kern/spinlock.c
++ cc kern/alloc.c
++ cc[USER] lib/libmain.c
++ cc[USER] lib/printfmt.c
++ cc[USER] lib/string.c
++ cc[USER] lib/readline.c
++ cc[USER] lib/random.c
++ GEN lib/random_data.c
+xxd -i -l 100 /dev/urandom lib/random_data.c
++ cc[USER] lib/random_data.c
++ ar obj/lib/libjos.a
+/usr/bin/llvm-ar: warning: creating obj/lib/libjos.a
++ cc[PROG] prog/test1.c
++ GEN: obj/prog/test1.ld
++ as[USER] lib/entry.S
++ ld obj/prog/test1
++ GEN obj/prog/test1_out.S
++ build obj/prog/test1_out
++ cc[PROG] prog/test2.c
++ GEN: obj/prog/test2.ld
++ ld obj/prog/test2
++ GEN obj/prog/test2_out.S
++ build obj/prog/test2_out
++ cc[PROG] prog/test3.c
++ GEN: obj/prog/test3.ld
++ ld obj/prog/test3
++ GEN obj/prog/test3_out.S
++ build obj/prog/test3_out
++ cc[PROG] prog/test4.c
++ GEN: obj/prog/test4.ld
++ ld obj/prog/test4
++ GEN obj/prog/test4_out.S
++ build obj/prog/test4_out
++ cc[PROG] prog/test5.c
++ GEN: obj/prog/test5.ld
++ ld obj/prog/test5
++ GEN obj/prog/test5_out.S
++ build obj/prog/test5_out
++ cc[PROG] prog/test6.c
++ GEN: obj/prog/test6.ld
++ ld obj/prog/test6
++ GEN obj/prog/test6_out.S
++ build obj/prog/test6_out
++ ld obj/kern/kernel
+rm obj/prog/test3.ld obj/prog/test1_out.S obj/prog/test2.ld obj/prog/test5.ld obj/prog/test6_out.S obj/prog/test6.ld obj/prog/test2_out.S obj/prog/test4_out.S obj/prog/test3_out.S obj/prog/test4.ld obj/prog/test5_out.S obj/prog/test1.ld
+make[1]: Leaving directory '/home/cdecl/oscourse'
+running JOS: Please, be patient. It takes from 10 to 60 seconds to run the tests.
+(97.6s) 
+  timer: OK 
+Score: 100/100
+make clean
+make[1]: Entering directory '/home/cdecl/oscourse'
+rm -rf obj .gdbinit jos.in qemu.log LoaderPkg/Binaries/Loader-X64.efi LoaderPkg/UDK/Build/LoaderPkg LoaderPkg/ESP kern/kernel.ld
+make[1]: Leaving directory '/home/cdecl/oscourse'
+ARCHS=IA32 ./grade-lab5 
+make[1]: Entering directory '/home/cdecl/oscourse'
++ as kern/bootstrap.S
++ as kern/entry.S
++ cc kern/init.c
++ cc kern/console.c
++ cc kern/dwarf.c
++ cc kern/dwarf_lines.c
++ cc kern/monitor.c
++ cc kern/env.c
++ cc kern/kclock.c
++ cc kern/picirq.c
++ cc kern/printf.c
++ cc kern/trap.c
++ as kern/trapentry.S
++ cc kern/timer.c
+kern/timer.c:134:87: warning: cast to 'void *' from smaller integer type 'uint32_t' (aka 'unsigned int') [-Wint-to-void-pointer-cast]
+  134 |         rsdt_ptr = (RSDT *)mmio_remap_last_region((physaddr_t)(rsd_ptr->RsdtAddress), (void *) (rsd_ptr->RsdtAddress), sizeof(RSDT), rsdt_ptr->h.Length);
+      |                                                                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
++ cc kern/sched.c
++ cc kern/kdebug.c
++ cc lib/printfmt.c
++ cc lib/readline.c
++ cc lib/string.c
++ cc kern/tsc.c
++ cc kern/uefi.c
++ as kern/uefiasm.S
++ cc kern/spinlock.c
++ cc kern/alloc.c
++ cc[USER] lib/libmain.c
++ cc[USER] lib/printfmt.c
++ cc[USER] lib/string.c
++ cc[USER] lib/readline.c
++ cc[USER] lib/random.c
++ GEN lib/random_data.c
+xxd -i -l 100 /dev/urandom lib/random_data.c
++ cc[USER] lib/random_data.c
++ ar obj/lib/libjos.a
+/usr/bin/llvm-ar: warning: creating obj/lib/libjos.a
++ cc[PROG] prog/test1.c
++ GEN: obj/prog/test1.ld
++ as[USER] lib/entry.S
++ ld obj/prog/test1
++ GEN obj/prog/test1_out.S
++ build obj/prog/test1_out
++ cc[PROG] prog/test2.c
++ GEN: obj/prog/test2.ld
++ ld obj/prog/test2
++ GEN obj/prog/test2_out.S
++ build obj/prog/test2_out
++ cc[PROG] prog/test3.c
++ GEN: obj/prog/test3.ld
++ ld obj/prog/test3
++ GEN obj/prog/test3_out.S
++ build obj/prog/test3_out
++ cc[PROG] prog/test4.c
++ GEN: obj/prog/test4.ld
++ ld obj/prog/test4
++ GEN obj/prog/test4_out.S
++ build obj/prog/test4_out
++ cc[PROG] prog/test5.c
++ GEN: obj/prog/test5.ld
++ ld obj/prog/test5
++ GEN obj/prog/test5_out.S
++ build obj/prog/test5_out
++ cc[PROG] prog/test6.c
++ GEN: obj/prog/test6.ld
++ ld obj/prog/test6
++ GEN obj/prog/test6_out.S
++ build obj/prog/test6_out
++ ld obj/kern/kernel
+rm obj/prog/test3.ld obj/prog/test1_out.S obj/prog/test2.ld obj/prog/test5.ld obj/prog/test6_out.S obj/prog/test6.ld obj/prog/test2_out.S obj/prog/test4_out.S obj/prog/test3_out.S obj/prog/test4.ld obj/prog/test5_out.S obj/prog/test1.ld
+make[1]: Leaving directory '/home/cdecl/oscourse'
+running JOS: Please, be patient. It takes from 10 to 60 seconds to run the tests.
+(94.9s) 
+  timer: OK 
+Score: 100/100

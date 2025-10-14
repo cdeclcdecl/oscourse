@@ -215,6 +215,7 @@ timer_start(const char *name) {
 
     if (timer_id == -1) {
         print_timer_error();
+        return;
     }
 
     timer_started = 1;
