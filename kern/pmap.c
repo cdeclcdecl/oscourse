@@ -118,6 +118,7 @@ ensure_free_desc(size_t count) {
 
 static struct Page *
 alloc_descriptor(enum PageState state) {
+
     ensure_free_desc(1);
 
     struct Page *new = (struct Page *)list_del(free_descriptors.next);
@@ -581,8 +582,9 @@ detect_memory(void) {
      * (from IOPHYSMEM to the physical address of end label. end points the the
      *  end of kernel executable image.)*/
     // LAB 6: Your code here
-
-    attach_region(IOPHYSMEM, (uintptr_t) end - KERN_BASE_ADDR, RESERVED_NODE);
+    //cprintf("here\n");
+    //attach_region(IOPHYSMEM, (uintptr_t) end - KERN_BASE_ADDR, RESERVED_NODE);
+    attach_region(IOPHYSMEM, PADDR(end), RESERVED_NODE);
 
     /* Detect memory via ether UEFI or CMOS */
     if (uefi_lp && uefi_lp->MemoryMap) {
@@ -610,8 +612,7 @@ detect_memory(void) {
             /* Attach memory described by memory map entry described by start
              * of type type*/
             // LAB 6: Your code here
-            attach_region((uintptr_t) start, (uintptr_t) ((uint8_t *)start + uefi_lp->MemoryMapDescriptorSize), type);
-
+            attach_region(start->PhysicalStart, start->PhysicalStart + start->NumberOfPages * EFI_PAGE_SIZE, type);
             start = (void *)((uint8_t *)start + uefi_lp->MemoryMapDescriptorSize);
         }
 

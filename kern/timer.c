@@ -148,7 +148,7 @@ acpi_find_table(const char *sign) {
 
     for (size_t i = 0; i < sdt_num; i++) {
         ACPISDTHeader *hdr = (ACPISDTHeader *)mmio_map_region(rsdt_ptr->PointerToOtherSDT[i], sizeof(ACPISDTHeader));
-        if (!strncmp(hdr->Signature, sign, 4)) {
+        if (hdr && !strncmp(hdr->Signature, sign, 4)) {
             return hdr;
         }
     }

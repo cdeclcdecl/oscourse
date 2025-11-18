@@ -127,7 +127,6 @@ early_boot_pml4_init(void) {
 
 void
 i386_init(void) {
-
     early_boot_pml4_init();
 
     /* Initialize the console.
