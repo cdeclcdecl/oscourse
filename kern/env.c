@@ -294,8 +294,8 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
 
 
     struct Proghdr *phdrs = (struct Proghdr *) ((uint64_t) binary + ElfHeader->e_phoff);
-    uintptr_t image_start = (uintptr_t) binary;
-    uintptr_t image_end = (uintptr_t) binary + size;
+    uintptr_t image_start = UINTPTR_MAX;
+    uintptr_t image_end = 0;
 
     for (uint16_t i = 0; i < ElfHeader->e_phnum; i++) {
         if (phdrs[i].p_type != ELF_PROG_LOAD) {
@@ -309,6 +309,14 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
 
         memcpy((void *)phdrs[i].p_va, (void *)((uint64_t) binary + phdrs[i].p_offset), (size_t) phdrs[i].p_filesz);
         memset((void *) (phdrs[i].p_va + phdrs[i].p_filesz), 0, (size_t) (phdrs[i].p_memsz - phdrs[i].p_filesz));
+
+        if (image_start > (uintptr_t) (phdrs[i].p_va)) {
+            image_start = (uintptr_t) (phdrs[i].p_va);
+        }
+
+        if (image_end < (uintptr_t) (phdrs[i].p_va + phdrs[i].p_filesz)) {
+            image_end = (uintptr_t) (phdrs[i].p_va + phdrs[i].p_filesz);
+        }
     }
 
     env->env_tf.tf_rip = ElfHeader->e_entry;
