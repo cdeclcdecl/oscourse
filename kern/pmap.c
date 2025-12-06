@@ -638,9 +638,10 @@ dump_virtual_tree(struct Page *node, int class) {
         cprintf(" ");
     }
 
-    if (node->state == MAPPING_NODE) {
-        cprintf("Mapping node mapped from %lx - %lx, class %d\n", (uintptr_t) (node->phy->addr << CLASS_BASE), (uintptr_t) ((node->phy->addr << CLASS_BASE) + CLASS_MASK(node->phy->class)), class);
-    } else if (node->state == INTERMEDIATE_NODE) {
+    if ((node->state & NODE_TYPE_MASK) == MAPPING_NODE) {
+        cprintf("Mapping node mapped from %lx - %lx, class %d\n", (uintptr_t) (node->phy->addr << CLASS_BASE), 
+                            (uintptr_t) ((node->phy->addr << CLASS_BASE) + CLASS_MASK(node->phy->class)), class);
+    } else if ((node->state & NODE_TYPE_MASK) == INTERMEDIATE_NODE) {
         cprintf("Intermediate node, class %d\n", class);
     }
 
@@ -699,7 +700,7 @@ dump_page_table(pte_t *pml4) {
                     dump_entry(pd[k], 2 * MB, pd[k] & PTE_PS);
                 }
 
-                if (pd[k] & PTE_P) {
+                if (pd[k] & PTE_PS) {
                     continue;
                 }
 
@@ -1001,6 +1002,7 @@ map_page(struct AddressSpace *spc, uintptr_t addr, struct Page *page, int flags)
         int res = alloc_fill_pt(spc->pml4, base, 512 * GB, pml4i0, pml4i1);
         if (pml4i1 - 1 >= NUSERPML4)
             propagate_pml4(spc);
+
 
         return res;
     }
@@ -1974,4 +1976,10 @@ init_memory(void) {
 
     check_virtual_tree(kspace.root, MAX_CLASS);
     if (trace_init) cprintf("Kernel virtual memory tree is correct\n");
+
+    struct Page *phys_page = alloc_page(2, 0);
+    uintptr_t vaddr = 0x100000;
+    res = map_page(&kspace, vaddr, phys_page, PROT_R | PROT_W);
+    //dump_virtual_tree(kspace.root, MAX_CLASS);
+    //panic("go to monitor");
 }

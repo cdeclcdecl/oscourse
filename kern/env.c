@@ -97,7 +97,8 @@ env_init(void) {
         envs[i].env_link = ((i == NENV - 1) ? NULL : &envs[i + 1]);
         envs[i].env_id = 0;
         envs[i].env_status = ENV_FREE;
-    }    
+    }
+    panic("rrr");
 }
 
 /* Allocates and initializes a new environment.
