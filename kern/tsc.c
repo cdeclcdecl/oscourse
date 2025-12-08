@@ -240,6 +240,7 @@ timer_cpu_frequency(const char *name) {
     for (int i = 0; i < MAX_TIMERS; i++) {
         if (timertab[i].timer_name && !strncmp(name, timertab[i].timer_name, 6)) {
             cprintf("%lu\n", timertab[i].get_cpu_freq());
+            return;
         }
     }
 

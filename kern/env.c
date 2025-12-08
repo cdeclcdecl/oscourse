@@ -94,10 +94,16 @@ env_init(void) {
      * Don't forget about rounding.
      * kzalloc_region() only works with current_space != NULL */
     // LAB 8: Your code here
+    if (current_space == NULL) {
+        panic("env_init: trying to use kzalloc with current_space == NULL");
+    }
+    envs = (struct Env *)kzalloc_region(NENV * sizeof(struct Env));
+    memset(envs, 0, ROUNDUP(sizeof(struct Env) * NENV, PAGE_SIZE));
 
     /* Map envs to UENVS read-only,
      * but user-accessible (with PROT_USER_ set) */
     // LAB 8: Your code here
+    map_region(current_space, UENVS, &kspace, (uintptr_t) envs, UENVS_SIZE, PROT_USER_ | PROT_R);
 
     /* Set up envs array */
     // LAB 3: Your code here
@@ -108,7 +114,6 @@ env_init(void) {
         envs[i].env_id = 0;
         envs[i].env_status = ENV_FREE;
     }
-    panic("rrr");
 }
 
 /* Allocates and initializes a new environment.
@@ -308,6 +313,7 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
     }
 
 
+    switch_address_space(&env->address_space);
     struct Proghdr *phdrs = (struct Proghdr *) ((uint64_t) binary + ElfHeader->e_phoff);
     uintptr_t image_start = UINTPTR_MAX;
     uintptr_t image_end = 0;
@@ -319,11 +325,21 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
 
         if (phdrs[i].p_filesz > phdrs[i].p_memsz) {
             cprintf("load_icode: section %u has %lu filesz with %lu memsz\n", i, phdrs[i].p_filesz, phdrs[i].p_memsz);
+            switch_address_space(&kspace);
+            return -E_INVALID_EXE;
+        }
+
+        uintptr_t rounded_addr = ROUNDDOWN(phdrs[i].p_va, PAGE_SIZE);
+        size_t rounded_size = ROUNDUP(phdrs[i].p_memsz, PAGE_SIZE);
+
+        if (map_region(current_space, rounded_addr, NULL, 0, rounded_size, PROT_RWX | PROT_USER_ | ALLOC_ZERO)) {
+            cprintf("load_icode: cannot map region [%lx. %lx]\n", rounded_addr, rounded_addr + rounded_size - 1);
+            switch_address_space(&kspace);
             return -E_INVALID_EXE;
         }
 
         memcpy((void *)phdrs[i].p_va, (void *)((uint64_t) binary + phdrs[i].p_offset), (size_t) phdrs[i].p_filesz);
-        memset((void *) (phdrs[i].p_va + phdrs[i].p_filesz), 0, (size_t) (phdrs[i].p_memsz - phdrs[i].p_filesz));
+        //memset((void *) (phdrs[i].p_va + phdrs[i].p_filesz), 0, (size_t) (phdrs[i].p_memsz - phdrs[i].p_filesz));
 
         if (image_start > (uintptr_t) (phdrs[i].p_va)) {
             image_start = (uintptr_t) (phdrs[i].p_va);
@@ -334,8 +350,19 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
         }
     }
 
+    uintptr_t stack_addr = (uintptr_t)(USER_STACK_TOP - USER_STACK_SIZE);
+    if (map_region(&env->address_space, stack_addr, NULL, 0, USER_STACK_SIZE, PROT_R | PROT_W | PROT_USER_ | ALLOC_ZERO)) {
+        cprintf("load_icode: cannot allocate user stack :( \n");
+        switch_address_space(&kspace);
+        return -E_INVALID_EXE;
+    }
+
     env->env_tf.tf_rip = ElfHeader->e_entry;
-    bind_functions(env, binary, size, image_start, image_end);
+#ifdef CONFIG_KSPACE
+    if (bind_functions(env, binary, size, image_start, image_end)) {
+        panic("load_icode: bind_functions failed");
+    }
+#endif
     return 0;
 }
 
@@ -363,6 +390,7 @@ env_create(uint8_t *binary, size_t size, enum EnvType type) {
 
     newenv->binary = binary;
     // LAB 8: Your code here
+    newenv->env_type = type;
 }
 
 
@@ -403,14 +431,15 @@ env_destroy(struct Env *env) {
 
     // LAB 3: Your code here
     env->env_status = ENV_DYING;
+    env_free(env);
     if (env == curenv) {
-        env_free(env);
         sched_yield();
     }
 
     /* Reset in_page_fault flags in case *current* environment
      * is getting destroyed after performing invalid memory access. */
     // LAB 8: Your code here
+    in_page_fault = 0;
 }
 
 #ifdef CONFIG_KSPACE
@@ -507,6 +536,7 @@ env_run(struct Env *env) {
     curenv->env_status = ENV_RUNNING;
     curenv->env_runs++;
 
+    switch_address_space(&curenv->address_space);
     env_pop_tf(&curenv->env_tf);
 
     panic("How did we get here?\n");

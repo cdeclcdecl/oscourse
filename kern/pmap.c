@@ -1588,16 +1588,23 @@ init_address_space(struct AddressSpace *space) {
     /* Allocte page table with alloc_pt into space->cr3
      * (remember to clean flag bits of result with PTE_ADDR) */
     // LAB 8: Your code here
+    pte_t pte = 0;
+    alloc_pt(&pte);
+    pte = PTE_ADDR(pte);
+    space->cr3 = (uintptr_t) pte;
 
     /* Put its kernel virtual address to space->pml4 */
     // LAB 8: Your code here
+    space->pml4 = KADDR(space->cr3);
 
     /* Allocate virtual tree root node
      * of type INTERMEDIATE_NODE with alloc_rescriptor() of type */
     // LAB 8: Your code here
+    space->root = alloc_descriptor(INTERMEDIATE_NODE);
 
     /* Initialize UVPT */
     // LAB 8: Your code here
+    space->pml4[PML4_INDEX(UVPT)] = space->cr3 | PTE_P | PTE_U;
 
     /* Why this call is required here and what does it do? */
     propagate_one_pml4(space, &kspace);
@@ -2024,7 +2031,27 @@ static uintptr_t user_mem_check_addr;
 int
 user_mem_check(struct Env *env, const void *va, size_t len, int perm) {
     // LAB 8: Your code here
-    return -E_FAULT;
+
+    void *cur = (void *)ROUNDDOWN(va, PAGE_SIZE);
+    struct Page *root_page = env->address_space.root;
+
+    while (cur < va + len) {
+        struct Page *cur_page = page_lookup_virtual(root_page, (uintptr_t) cur, 0, 0);
+
+        if (!cur_page->phy || (cur_page->state & PAGE_PROT(perm)) != PAGE_PROT(perm)) {
+            user_mem_check_addr = (uintptr_t)MAX(va, cur);
+            return -E_FAULT;
+        }
+
+        if ((uintptr_t) cur > MAX_USER_READABLE) {
+            user_mem_check_addr = (uintptr_t)MAX(va, cur);
+            return -E_FAULT;
+        }
+
+        cur += PAGE_SIZE;
+    }
+
+    return 0;
 }
 
 void
