@@ -21,9 +21,41 @@
  *   a perfectly valid place to map a page.) */
 int32_t
 ipc_recv(envid_t *from_env_store, void *pg, size_t *size, int *perm_store) {
-    // LAB 9: Your code here:
+    // LAB 9: Your code here: DONE
 
-    return -1;
+    if (!pg) {
+        pg = (void *) MAX_USER_ADDRESS;
+    }
+
+    int res = sys_ipc_recv(pg, PAGE_SIZE);
+
+    if (res) {
+        if (from_env_store) {
+            *from_env_store = 0;
+        }
+
+        if (perm_store) {
+            *perm_store = 0;
+        }
+
+        return res;
+    } else {
+
+        if (from_env_store) {
+            *from_env_store = thisenv->env_ipc_from;
+        }
+
+        if (perm_store && pg != (void *) MAX_USER_ADDRESS) {
+            *perm_store = thisenv->env_ipc_perm;
+        }
+
+        if (size) {
+            *size = PAGE_SIZE;
+        }
+
+        return thisenv->env_ipc_value;
+
+    }
 }
 
 /* Send 'val' (and 'pg' with 'perm', if 'pg' is nonnull) to 'toenv'.
@@ -36,7 +68,26 @@ ipc_recv(envid_t *from_env_store, void *pg, size_t *size, int *perm_store) {
  *   as meaning "no page".  (Zero is not the right value.) */
 void
 ipc_send(envid_t to_env, uint32_t val, void *pg, size_t size, int perm) {
-    // LAB 9: Your code here:
+    // LAB 9: Your code here: DONE
+
+    if (!pg) {
+        pg = (void *) MAX_USER_ADDRESS;
+    }
+
+    int res;
+
+    do {
+        cprintf("here\n");
+        res = sys_ipc_try_send(to_env, (uint64_t) val, pg, size, perm);
+
+        if (res && res != -E_IPC_NOT_RECV) {
+            panic("ipc_send: failed to send %u to env %d, with error num %i\n", val, to_env, res);
+        }
+
+        sys_yield();
+    } while (res);
+    
+
 }
 
 /* Find the first environment of the given type.  We'll use this to

@@ -28,7 +28,6 @@ timers_init(void) {
     timertab[4] = timer_hpet1;
 
     for (int i = 0; i < MAX_TIMERS; i++) {
-        cprintf("here %d\n", i + 1);
         if (timertab[i].timer_init) {
             timertab[i].timer_init();
             if (trace_init) cprintf("Initialized timer %s\n", timertab[i].timer_name);

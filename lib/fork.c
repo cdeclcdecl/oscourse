@@ -18,11 +18,32 @@
  */
 envid_t
 fork(void) {
-    // LAB 9: Your code here.
+    // LAB 9: Your code here. DONE
 
-    panic("fork() is not implemented");
+    envid_t child_id = sys_exofork();
 
-    return 0;
+    if (child_id < 0) {
+        return child_id;
+    }
+
+    if (!child_id) {
+        thisenv = &envs[ENVX(sys_getenvid())];
+        return 0;
+    }
+
+    if (sys_map_region(CURENVID, 0, child_id, 0, MAX_USER_ADDRESS, PROT_ALL | PROT_LAZY | PROT_COMBINE) < 0) {
+        return -1;
+    }
+
+    if (sys_env_set_pgfault_upcall(child_id, thisenv-> env_pgfault_upcall) < 0) {
+        return -1;
+    }
+
+    if (sys_env_set_status(child_id, ENV_RUNNABLE) < 0) {
+        return -1;
+    }
+
+    return child_id;
 }
 
 envid_t
