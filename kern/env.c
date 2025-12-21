@@ -408,7 +408,13 @@ env_create(uint8_t *binary, size_t size, enum EnvType type) {
     newenv->binary = binary;
     // LAB 8: Your code here
     newenv->env_type = type;
-    // LAB 10: Your code here
+    // LAB 10: Your code here DONE
+
+    if (type == ENV_TYPE_FS) {
+        newenv->env_tf.tf_rflags |= FL_IOPL_3;
+    } else {
+        newenv->env_tf.tf_rflags &= ~FL_IOPL_MASK; 
+    }
 }
 
 
@@ -453,7 +459,7 @@ env_destroy(struct Env *env) {
     if (env == curenv) {
         sched_yield();
     }
-    // LAB 10: Your code here
+    // LAB 10: Your code here DONE
 
     /* Reset in_page_fault flags in case *current* environment
      * is getting destroyed after performing invalid memory access. */

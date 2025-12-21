@@ -77,7 +77,7 @@ ipc_send(envid_t to_env, uint32_t val, void *pg, size_t size, int perm) {
     int res;
 
     do {
-        cprintf("here\n");
+        //cprintf("here\n");
         res = sys_ipc_try_send(to_env, (uint64_t) val, pg, size, perm);
 
         if (res && res != -E_IPC_NOT_RECV) {
