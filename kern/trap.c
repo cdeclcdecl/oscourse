@@ -454,6 +454,7 @@ page_fault_handler(struct Trapframe *tf) {
 
     
     
+    
     /*
     if (!curenv->env_pgfault_upcall) {
         if (trace_pagefaults) {
@@ -467,7 +468,7 @@ page_fault_handler(struct Trapframe *tf) {
         user_mem_assert(curenv, (void *)tf->tf_rsp, sizeof(struct UTrapframe), PROT_W | PROT_USER_);
         env_destroy(curenv);
     }
-    */
+    */    
 
 
     /* Force allocate exception stack page to prevent memcpy from

@@ -152,7 +152,7 @@ debuginfo_rip(uintptr_t addr, struct Ripdebuginfo *info) {
         size_t copy_len = MIN(func_name_len, sizeof(info->rip_fn_name) - 1);
         memcpy(info->rip_fn_name, func_name, copy_len);
         info->rip_fn_name[copy_len] = '\0';
-        info->rip_fn_namelen = func_name_len;
+        info->rip_fn_namelen = (int) func_name_len;
     } else {
         strcpy(info->rip_fn_name, UNKNOWN);
         info->rip_fn_namelen = sizeof(UNKNOWN) - 1;

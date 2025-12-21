@@ -107,7 +107,7 @@ serve_open(envid_t envid, struct Fsreq_open *req,
 
     /* Find an open file ID */
     if ((res = openfile_alloc(&o)) < 0) {
-        if (debug) cprintf("openfile_alloc failed: %i", res);
+        if (debug) cprintf("openfile_alloc failed: %i\n", res);
         return res;
     }
 
@@ -116,13 +116,13 @@ serve_open(envid_t envid, struct Fsreq_open *req,
         if ((res = file_create(path, &f)) < 0) {
             if (!(req->req_omode & O_EXCL) && res == -E_FILE_EXISTS)
                 goto try_open;
-            if (debug) cprintf("file_create failed: %i", res);
+            if (debug) cprintf("file_create failed: %i\n", res);
             return res;
         }
     } else {
     try_open:
         if ((res = file_open(path, &f)) < 0) {
-            if (debug) cprintf("file_open failed: %i", res);
+            if (debug) cprintf("file_open failed: %i\n", res);
             return res;
         }
     }
@@ -130,12 +130,12 @@ serve_open(envid_t envid, struct Fsreq_open *req,
     /* Truncate */
     if (req->req_omode & O_TRUNC) {
         if ((res = file_set_size(f, 0)) < 0) {
-            if (debug) cprintf("file_set_size failed: %i", res);
+            if (debug) cprintf("file_set_size failed: %i\n", res);
             return res;
         }
     }
     if ((res = file_open(path, &f)) < 0) {
-        if (debug) cprintf("file_open failed: %i", res);
+        if (debug) cprintf("file_open failed: %i\n", res);
         return res;
     }
 
@@ -198,6 +198,7 @@ serve_read(envid_t envid, union Fsipc *ipc) {
     }
 
     // LAB 10: Your code here DONE
+    req->req_n = req->req_n > PAGE_SIZE ? PAGE_SIZE : req->req_n;
     struct OpenFile *po;
     int res;
 
