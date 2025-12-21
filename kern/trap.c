@@ -121,6 +121,8 @@ extern void thdlr18(void);
 extern void thdlr19(void);
 extern void thdlr48(void);
 
+extern void kbd_thdlr(void);
+extern void serial_thdlr(void);
 
 
 void
@@ -161,7 +163,10 @@ trap_init(void) {
      * code execution */
     idt[T_PGFLT].gd_ist = 1;
 
-    // LAB 11: Your code here
+    // LAB 11: Your code here DONE
+
+    idt[IRQ_OFFSET + IRQ_KBD] = GATE(0, GD_KT, kbd_thdlr, 3);
+    idt[IRQ_OFFSET + IRQ_SERIAL] = GATE(0, GD_KT, serial_thdlr, 3);
 
     /* Per-CPU setup */
     trap_init_percpu();
@@ -306,9 +311,17 @@ trap_dispatch(struct Trapframe *tf) {
         sched_yield();
 
         return;
-        // LAB 11: Your code here
+        // LAB 11: Your code here DONE
         /* Handle keyboard (IRQ_KBD + kbd_intr()) and
          * serial (IRQ_SERIAL + serial_intr()) interrupts. */
+    case IRQ_OFFSET + IRQ_KBD:
+        kbd_intr();
+        sched_yield();
+        return;
+    case IRQ_OFFSET + IRQ_SERIAL:
+        serial_intr();
+        sched_yield();
+        return;
     default:
         print_trapframe(tf);
         if (!(tf->tf_cs & 3))
@@ -459,8 +472,7 @@ page_fault_handler(struct Trapframe *tf) {
 
     
     
-    
-    /*
+    uintptr_t va = cr2;
     if (!curenv->env_pgfault_upcall) {
         if (trace_pagefaults) {
             cprintf("<%p> user fault ip=%08lX va=%08lX err=%c%c%c%c%c\n", current_space, tf->tf_rip, va,
@@ -473,7 +485,6 @@ page_fault_handler(struct Trapframe *tf) {
         user_mem_assert(curenv, (void *)tf->tf_rsp, sizeof(struct UTrapframe), PROT_W | PROT_USER_);
         env_destroy(curenv);
     }
-    */    
 
 
     /* Force allocate exception stack page to prevent memcpy from
@@ -498,7 +509,7 @@ page_fault_handler(struct Trapframe *tf) {
     /* Build local copy of UTrapframe */
     // LAB 9: Your code here: DONE
 
-    uintptr_t va = cr2;
+    
     struct UTrapframe utf = {
         .utf_err = tf->tf_err,
         .utf_fault_va = va,

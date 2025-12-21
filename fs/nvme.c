@@ -645,14 +645,22 @@ nvme_cmd_rw(struct NvmeController *ctl, struct NvmeQueueAttributes *ioq, int opc
      *      forget to check for potential errors! */
     // LAB 10: Your code here DONE
 
-    int err = -NVME_IOCMD_FAILED;
-    err = nvme_submit_cmd(ctl, ioq);
+    int if_fl = read_rflags() & FL_IF;
+    if (if_fl) {
+        asm volatile("cli");
+    } 
 
-    if (err != NVME_OK) {
-        return err;
+    int res = nvme_submit_cmd(ctl, ioq);
+
+    if (res == NVME_OK) {
+        res = nvme_wait_completion(ctl, ioq, cid, 300);
     }
 
-    return nvme_wait_completion(ctl, ioq, cid, 1);
+    if (if_fl) { 
+        asm volatile("sti");
+    }
+
+    return res;
 }
 
 int

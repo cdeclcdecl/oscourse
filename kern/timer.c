@@ -142,16 +142,23 @@ acpi_find_table(const char *sign) {
         panic("acpi_find_table: invalid RSDT/XSDT checksum\n");
     }
     
-    ACPISDTHeader **iter = (void *)&xsdt[1];
+    uint8_t *entries_start = (uint8_t *)xsdt + sizeof(ACPISDTHeader);
+    size_t entry_count = (xsdt->Length - sizeof(ACPISDTHeader)) / sizeof(uint64_t); 
 
-    for (; iter < (ACPISDTHeader **)((void *)xsdt + xsdt->Length); iter++) {
-        ACPISDTHeader *hdr = (ACPISDTHeader *)mmio_map_region((physaddr_t)(*iter), sizeof(ACPISDTHeader));
+    for (size_t i = 0; i < entry_count; i++) {
+
+        uint64_t addr;
+        memcpy(&addr, entries_start + i * sizeof(uint64_t), sizeof(addr));
+
+        if (addr == 0) continue;
+
+        ACPISDTHeader *hdr = (ACPISDTHeader *)mmio_map_region((physaddr_t)(addr), sizeof(ACPISDTHeader));
         
         if (strncmp(hdr->Signature, sign, 4)) {
             continue;
         }
         
-        hdr = (ACPISDTHeader *)mmio_remap_last_region((physaddr_t)(*iter), (void *)hdr, sizeof(ACPISDTHeader), hdr->Length);
+        hdr = (ACPISDTHeader *)mmio_remap_last_region((physaddr_t)(addr), (void *)hdr, sizeof(ACPISDTHeader), hdr->Length);
 
         return hdr;
     }

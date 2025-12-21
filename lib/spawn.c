@@ -127,6 +127,7 @@ spawn(const char *prog, const char **argv) {
 
     close(fd);
 
+   
     /* Copy shared library state. */
     if ((res = foreach_shared_region(copy_shared_region, &child)) < 0)
         panic("copy_shared_region: %i", res);
@@ -136,6 +137,7 @@ spawn(const char *prog, const char **argv) {
 
     if ((res = sys_env_set_status(child, ENV_RUNNABLE)) < 0)
         panic("sys_env_set_status: %i", res);
+
 
     return child;
 
@@ -276,16 +278,57 @@ map_segment(envid_t child, uintptr_t va, size_t memsz,
         fileoffset -= res;
     }
 
-    // LAB 11: Your code here
+    // LAB 11: Your code here DONE
     /* NOTE: There's restriction on maximal filesz
      * for each program segment (HUGE_PAGE_SIZE) */
 
+    if (filesz > HUGE_PAGE_SIZE || filesz > memsz) {
+        return -E_INVALID_EXE;
+    } 
+
     /* Allocate filesz - memsz in child */
+
+    filesz = ROUNDUP(filesz, PAGE_SIZE);
+
+    if (filesz < memsz && (res = sys_alloc_region(child, (void *)(va + filesz), memsz, perm))) {
+        return res;
+    }
+
+    if (!filesz) {
+        return 0;
+    }
+
     /* Allocate filesz in parent to UTEMP */
+
+    if ((res = sys_alloc_region(CURENVID, UTEMP, filesz, PROT_RW | PROT_X | perm))) {
+        return res;
+    }
+
     /* seek() fd to fileoffset  */
+
+    if ((res = seek(fd, fileoffset))) {
+        return res;
+    }
+
     /* read filesz to UTEMP */
+
+    res = readn(fd, (void *) UTEMP, filesz);
+    assert(res == filesz);
+
     /* Map read section conents to child */
+
+    
+
+    if ((res = sys_map_region(CURENVID, (void *)UTEMP, child, (void *) va, filesz, perm))) {
+        return res;
+    }
+
+    
     /* Unmap it from parent */
+    
+    if ((res = sys_unmap_region(CURENVID, (void *) UTEMP, filesz))) {
+        return res;
+    }
 
     return 0;
 }

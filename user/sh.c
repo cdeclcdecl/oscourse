@@ -48,7 +48,19 @@ again:
              * If not, dup 'fd' onto file descriptor 0,
              * then close the original 'fd'. */
 
-            // LAB 11: Your code here
+            // LAB 11: Your code here DONE
+            fd = open(t, O_RDONLY);
+
+            if (fd < 0) {
+                cprintf("failed to open %s\n", t);
+                exit();
+            }
+
+            if (fd) {
+                dup(fd, 0);
+                close(fd);
+            }
+
             break;
 
         case '>': /* Output redirection */

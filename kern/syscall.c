@@ -491,7 +491,24 @@ sys_ipc_recv(uintptr_t dstva, uintptr_t maxsize) {
  */
 static int
 sys_env_set_trapframe(envid_t envid, struct Trapframe *tf) {
-    // LAB 11: Your code here
+    // LAB 11: Your code here DONE
+
+    struct Env *new = NULL;
+
+    if (envid2env(envid, &new, 1) < 0) {
+        return -E_BAD_ENV;
+    }
+
+    user_mem_assert(curenv, tf, sizeof(*tf), PROT_R | PROT_USER_);
+    nosan_memcpy((void *)&new->env_tf, (void *)tf, sizeof(*tf));
+
+    new->env_tf.tf_cs = GD_UT | 3;
+    new->env_tf.tf_ds = GD_UD | 3;
+    new->env_tf.tf_es = GD_UD | 3;
+    new->env_tf.tf_ss = GD_UD | 3;
+
+    new->env_tf.tf_rflags &= 0xFFF;
+    new->env_tf.tf_rflags |= FL_IF;
 
     return 0;
 }
@@ -524,7 +541,7 @@ syscall(uintptr_t syscallno, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t
     // LAB 8: Your code here
     // LAB 9: Your code here
     // LAB 10: Your code here
-    // LAB 11: Your code here
+    // LAB 11: Your code here DONE
 
     switch(syscallno) {
         case SYS_cputs:
@@ -549,6 +566,8 @@ syscall(uintptr_t syscallno, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t
             return sys_exofork();
         case SYS_env_set_status:
             return sys_env_set_status((envid_t) a1, (int) a2);
+        case SYS_env_set_trapframe:
+            return sys_env_set_trapframe((envid_t) a1, (struct Trapframe *) a2);
         case SYS_env_set_pgfault_upcall:
             return sys_env_set_pgfault_upcall((envid_t) a1, (void *) a2);
         case SYS_yield:

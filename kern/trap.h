@@ -43,5 +43,7 @@ void thdlr17(void);
 void thdlr18(void);
 void thdlr19(void);
 void thdlr48(void);
+void kbd_thdlr(void);
+void serial_thdlr(void);
 
 #endif /* JOS_KERN_TRAP_H */
