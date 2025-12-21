@@ -523,7 +523,8 @@ syscall(uintptr_t syscallno, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t
 
     // LAB 8: Your code here
     // LAB 9: Your code here
-    // LAB 10: Your code here DONE
+    // LAB 10: Your code here
+    // LAB 11: Your code here
 
     switch(syscallno) {
         case SYS_cputs:
@@ -560,8 +561,7 @@ syscall(uintptr_t syscallno, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t
         default:
             return -E_NO_SYS;
     }   
-    // LAB 10: Your code here
-    // LAB 11: Your code here
+
 
     return -E_NO_SYS;
 }
