@@ -218,6 +218,11 @@ timer_start(const char *name) {
         return;
     }
 
+    if (!timertab[timer_id].get_cpu_freq) {
+        print_timer_error();
+        return;
+    }
+
     timer_started = 1;
     freq = timertab[timer_id].get_cpu_freq();
     timer = read_tsc();
@@ -239,6 +244,11 @@ void
 timer_cpu_frequency(const char *name) {
     for (int i = 0; i < MAX_TIMERS; i++) {
         if (timertab[i].timer_name && !strncmp(name, timertab[i].timer_name, 6)) {
+            if (!timertab[timer_id].get_cpu_freq) {
+                print_timer_error();
+                return;
+            }
+
             cprintf("%lu\n", timertab[i].get_cpu_freq());
             return;
         }

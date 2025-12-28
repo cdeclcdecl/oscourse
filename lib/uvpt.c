@@ -1,7 +1,7 @@
 /* User virtual page table helpers */
 
 #include <inc/lib.h>
-#include <inc/mmu.h>
+#include <inc/mmu.h>    
 
 extern volatile pte_t uvpt[];     /* VA of "virtual page table" */
 extern volatile pde_t uvpd[];     /* VA of current page directory */

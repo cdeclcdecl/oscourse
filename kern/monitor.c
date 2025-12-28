@@ -80,16 +80,29 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf) {
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf) {
     // LAB 2: Your code here
-    struct Ripdebuginfo info;
-    uint64_t rbp = read_rbp();
-    cprintf("Stack Backtrace:\n");
-    while (rbp) {
-        uint64_t rip = *(uint64_t *)(rbp + 8);
-        cprintf("  rbp %016lx  rip %016lx\n", rbp, rip);
-        debuginfo_rip(rip, &info);
-        cprintf("    %s:%d: %s+%d\n", info.rip_file, info.rip_line, info.rip_fn_name, (int) (rip - info.rip_fn_addr));
-        rbp = *(uint64_t *)(rbp);
+    cprintf("Stack backtrace:\n");
+    uint64_t *rbp = (uint64_t *)read_rbp();
+    extern char bootstacktop[];
+    uint64_t stack_top = (uint64_t)bootstacktop;
+    while (rbp != NULL && (uint64_t)rbp < stack_top) {
+        uint64_t rip = *(rbp + 1);
+        cprintf("  rbp %016lx  rip %016lx\n", (uint64_t)rbp, rip);
+        struct Ripdebuginfo info;
+        if (debuginfo_rip(rip, &info) == 0) {
+            char fn_buf[RIPDEBUG_BUFSIZ + 1];
+            int copy_len = info.rip_fn_namelen < RIPDEBUG_BUFSIZ ? info.rip_fn_namelen : RIPDEBUG_BUFSIZ;
+            memcpy(fn_buf, info.rip_fn_name, copy_len);
+            fn_buf[copy_len] = '\0';
+            cprintf("    %s:%d: %s+%ld\n", info.rip_file, info.rip_line, fn_buf, (long)(rip - info.rip_fn_addr));
+        }
+        uint64_t next_rbp = *rbp;
+        if (next_rbp == 0 || next_rbp <= (uint64_t)rbp || next_rbp >= stack_top) {
+            break;
+        }
+
+        rbp = (uint64_t *)next_rbp;
     }
+
     return 0;
 }
 
@@ -174,15 +187,17 @@ mon_dumpcmos(int argc, char **argv, struct Trapframe *tf) {
     // Hint: Use cmos_read8()/cmos_write8() functions.
     // LAB 4: Your code here
 
+    uint8_t cmos_buf = 0;
     cprintf("CMOS memory dump:");
 
     for (size_t i = 0; i < CMOS_SIZE; i++) {
-        if (!(i & 0x1111)) {
-            cprintf("\n%02lx: ", i);
+        if (i % 16 == 0) {
+            cprintf("\n%02lX: ", i);
         }
-
-        cprintf("%02x ", cmos_read8(i));
+        cmos_buf = cmos_read8(i);
+        cprintf("%02X ", cmos_buf);
     }
+
     cprintf("\n");
     return 0;
 }
