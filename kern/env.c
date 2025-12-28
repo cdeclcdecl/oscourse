@@ -97,7 +97,7 @@ env_init(void) {
     /* Allocate vsys array with kzalloc_region().
      * Don't forget about rounding.
      * kzalloc_region only works with current_space != NULL */
-    // LAB 12: Your code here
+    // LAB 12: Your code here DONE
 
     /* Allocate envs array with kzalloc_region().
      * Don't forget about rounding.
@@ -109,10 +109,14 @@ env_init(void) {
     envs = (struct Env *)kzalloc_region(NENV * sizeof(struct Env));
     memset(envs, 0, ROUNDUP(sizeof(struct Env) * NENV, PAGE_SIZE));
 
+    vsys = kzalloc_region(UVSYS_SIZE);
+    memset((void *)vsys, 0, UVSYS_SIZE);
+
     /* Map envs to UENVS read-only,
      * but user-accessible (with PROT_USER_ set) */
     // LAB 8: Your code here
     map_region(current_space, UENVS, &kspace, (uintptr_t) envs, UENVS_SIZE, PROT_USER_ | PROT_R);
+    map_region(current_space, UVSYS, &kspace, (uintptr_t) vsys, UVSYS_SIZE, PROT_USER_ | PROT_R);
 
     /* Set up envs array */
     // LAB 3: Your code here

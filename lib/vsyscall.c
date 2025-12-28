@@ -3,9 +3,9 @@
 
 static inline uint64_t
 vsyscall(int num) {
-    // LAB 12: Your code here
+    // LAB 12: Your code here DONE
     (void)num;
-    return 0;
+    return num < NSYSCALLS ? (int) vsys[num] : -E_INVAL;
 }
 
 int
