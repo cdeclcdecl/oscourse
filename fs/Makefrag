@@ -33,6 +33,9 @@ USERAPPS :=		$(OBJDIR)/user/init \
 			$(OBJDIR)/user/hello \
 			$(OBJDIR)/user/date \
 			$(OBJDIR)/user/vdate \
+			$(OBJDIR)/user/brainfuck \
+			$(OBJDIR)/user/bf_compiler \
+			$(OBJDIR)/user/bf_jit_interpreter
 
 
 FSIMGFILES := $(FSIMGTXTFILES) $(USERAPPS)
