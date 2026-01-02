@@ -1,8 +1,7 @@
-// brainfuck.c TEST
-
 #include <inc/lib.h>
+#include <inc/bf.h>
 
-void
-umain(int argc, char **argv) {
-    sys_cputs("Hello, Brainfuck JIT Interpreter!\n", 35);
+int umain(int argc, char **argv) {
+    cprintf("Not implemented yet\n");
+    return 0;
 }
