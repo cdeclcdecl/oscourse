@@ -58,12 +58,12 @@ pci_iop_write_dword(struct PciDevice *pcid, uint8_t reg, uint32_t value) {
 
 static inline uint16_t
 pci_iop_read_word(struct PciDevice *pcid, uint8_t reg) {
-    return (uint16_t) (pci_iop_read_dword(pcid, reg) >> ((reg & 0x2) * 8));
+    return (uint16_t)(pci_iop_read_dword(pcid, reg) >> ((reg & 0x2) * 8));
 }
 
 static inline uint8_t
 pci_iop_read_byte(struct PciDevice *pcid, uint8_t reg) {
-    return (uint8_t) (pci_iop_read_dword(pcid, reg) >> ((reg & 0x3) * 8));
+    return (uint8_t)(pci_iop_read_dword(pcid, reg) >> ((reg & 0x3) * 8));
 }
 
 static inline void

@@ -440,7 +440,7 @@ function_by_info(const struct Dwarf_Addrs *addrs, uintptr_t p, Dwarf_Off cu_offs
             do {
                 if (curr_abbrev_entry >= addrs->abbrev_end) break;
                 curr_abbrev_entry += dwarf_read_uleb128(curr_abbrev_entry, &name);
-                if (curr_abbrev_entry >= addrs->abbrev_end) break; 
+                if (curr_abbrev_entry >= addrs->abbrev_end) break;
                 curr_abbrev_entry += dwarf_read_uleb128(curr_abbrev_entry, &form);
             } while (name != 0 || form != 0);
         }
@@ -571,7 +571,7 @@ address_by_fname(const struct Dwarf_Addrs *addrs, const char *fname, uintptr_t *
                      * You can read unsigned LEB128 number using dwarf_read_uleb128 function.
                      * Attribute value can be obtained using dwarf_read_abbrev_entry function. */
                     // LAB 3: Your code here:
-                    uintptr_t low_pc = 0;  
+                    uintptr_t low_pc = 0;
 
                     do {
                         abbrev_entry += dwarf_read_uleb128(abbrev_entry, &name);
@@ -582,7 +582,7 @@ address_by_fname(const struct Dwarf_Addrs *addrs, const char *fname, uintptr_t *
                         } else {
                             entry += dwarf_read_abbrev_entry(entry, form, NULL, 0, address_size);
                         }
-                        
+
                     } while (name || form);
 
                     if (low_pc) {

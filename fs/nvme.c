@@ -648,7 +648,7 @@ nvme_cmd_rw(struct NvmeController *ctl, struct NvmeQueueAttributes *ioq, int opc
     int if_fl = read_rflags() & FL_IF;
     if (if_fl) {
         asm volatile("cli");
-    } 
+    }
 
     int res = nvme_submit_cmd(ctl, ioq);
 
@@ -656,7 +656,7 @@ nvme_cmd_rw(struct NvmeController *ctl, struct NvmeQueueAttributes *ioq, int opc
         res = nvme_wait_completion(ctl, ioq, cid, 300);
     }
 
-    if (if_fl) { 
+    if (if_fl) {
         asm volatile("sti");
     }
 

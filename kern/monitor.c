@@ -106,7 +106,8 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf) {
     return 0;
 }
 
-int mon_echo(int argc, char **argv, struct Trapframe *tf) {
+int
+mon_echo(int argc, char **argv, struct Trapframe *tf) {
     for (size_t i = 1; i < argc; i++) {
         cprintf("%s%c", argv[i], i == argc - 1 ? '\n' : ' ');
     }
@@ -132,7 +133,7 @@ mon_stop(int argc, char **argv, struct Trapframe *tf) {
     if (argc != 1) {
         return 1;
     }
-    
+
     timer_stop();
 
     return 0;
@@ -142,7 +143,7 @@ int
 mon_frequency(int argc, char **argv, struct Trapframe *tf) {
     if (argc != 2) {
         return 1;
-    }   
+    }
 
     timer_cpu_frequency(argv[1]);
 

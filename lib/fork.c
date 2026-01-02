@@ -35,7 +35,7 @@ fork(void) {
         return -1;
     }
 
-    if (sys_env_set_pgfault_upcall(child_id, thisenv-> env_pgfault_upcall) < 0) {
+    if (sys_env_set_pgfault_upcall(child_id, thisenv->env_pgfault_upcall) < 0) {
         return -1;
     }
 

@@ -115,8 +115,8 @@ env_init(void) {
     /* Map envs to UENVS read-only,
      * but user-accessible (with PROT_USER_ set) */
     // LAB 8: Your code here
-    map_region(current_space, UENVS, &kspace, (uintptr_t) envs, UENVS_SIZE, PROT_USER_ | PROT_R);
-    map_region(current_space, UVSYS, &kspace, (uintptr_t) vsys, UVSYS_SIZE, PROT_USER_ | PROT_R);
+    map_region(current_space, UENVS, &kspace, (uintptr_t)envs, UENVS_SIZE, PROT_USER_ | PROT_R);
+    map_region(current_space, UVSYS, &kspace, (uintptr_t)vsys, UVSYS_SIZE, PROT_USER_ | PROT_R);
 
     /* Set up envs array */
     // LAB 3: Your code here
@@ -223,8 +223,8 @@ static int
 bind_functions(struct Env *env, uint8_t *binary, size_t size, uintptr_t image_start, uintptr_t image_end) {
     // LAB 3: Your code here:
     /* NOTE: find_function from kdebug.c should be used */
-    struct Elf * ElfHeader = (struct Elf *) binary;
-    struct Secthdr *sh = (struct Secthdr *) (binary + ElfHeader->e_shoff);
+    struct Elf *ElfHeader = (struct Elf *)binary;
+    struct Secthdr *sh = (struct Secthdr *)(binary + ElfHeader->e_shoff);
     char *sh_str = (char *)(binary + sh[ElfHeader->e_shstrndx].sh_offset);
 
     uint16_t symtndx = UINT16_MAX;
@@ -243,16 +243,16 @@ bind_functions(struct Env *env, uint8_t *binary, size_t size, uintptr_t image_st
         panic("bind_functions: can't find symt\n");
     }
 
-    struct Elf64_Sym *symt = (struct Elf64_Sym *) (binary + sh[symtndx].sh_offset);
+    struct Elf64_Sym *symt = (struct Elf64_Sym *)(binary + sh[symtndx].sh_offset);
     uintptr_t addr = 0;
 
     for (size_t i = 0; i < sh[symtndx].sh_size / sizeof(struct Elf64_Sym *); i++) {
         if (ELF64_ST_BIND(symt[i].st_info) == STB_GLOBAL && ELF64_ST_TYPE(symt[i].st_info) == STT_OBJECT) {
-            addr = find_function((char *) (binary + sh[strtndx].sh_offset + symt[i].st_name));
+            addr = find_function((char *)(binary + sh[strtndx].sh_offset + symt[i].st_name));
 
             if (addr) {
                 uintptr_t *func_addr = (uintptr_t *)symt[i].st_value;
-                memcpy((void *) func_addr, (void *) &addr, sizeof(addr));
+                memcpy((void *)func_addr, (void *)&addr, sizeof(addr));
             }
         }
     }
@@ -306,11 +306,11 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
     // LAB 8: Your code here
 
     if (!env || !binary || size < sizeof(struct Elf)) {
-        cprintf("load_icode: invalid input\n");        
+        cprintf("load_icode: invalid input\n");
         return -E_INVALID_EXE;
-    } 
+    }
 
-    struct Elf *ElfHeader = (struct Elf *) binary;
+    struct Elf *ElfHeader = (struct Elf *)binary;
 
     if (ElfHeader->e_magic != ELF_MAGIC) {
         cprintf("load_icode: file has magic %08X instead of %08X\n", ElfHeader->e_magic, ELF_MAGIC);
@@ -318,7 +318,7 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
     }
 
     if (ElfHeader->e_shentsize != sizeof(struct Secthdr)) {
-        cprintf("load_icode: file has sections of %u bytes instead of %u\n", ElfHeader->e_shentsize, (uint32_t) sizeof(struct Secthdr));
+        cprintf("load_icode: file has sections of %u bytes instead of %u\n", ElfHeader->e_shentsize, (uint32_t)sizeof(struct Secthdr));
         return -E_INVALID_EXE;
     }
 
@@ -327,13 +327,13 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
     }
 
     if (ElfHeader->e_phentsize != sizeof(struct Proghdr)) {
-        cprintf("load_icode: file has program headers of %u bytes instead of %u\n", ElfHeader->e_phentsize, (uint32_t) sizeof(struct Proghdr));
+        cprintf("load_icode: file has program headers of %u bytes instead of %u\n", ElfHeader->e_phentsize, (uint32_t)sizeof(struct Proghdr));
         return -E_INVALID_EXE;
     }
 
 
     switch_address_space(&env->address_space);
-    struct Proghdr *phdrs = (struct Proghdr *) ((uint64_t) binary + ElfHeader->e_phoff);
+    struct Proghdr *phdrs = (struct Proghdr *)((uint64_t)binary + ElfHeader->e_phoff);
     uintptr_t image_start = UINTPTR_MAX;
     uintptr_t image_end = 0;
 
@@ -357,15 +357,15 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
             return -E_INVALID_EXE;
         }
 
-        memcpy((void *)phdrs[i].p_va, (void *)((uint64_t) binary + phdrs[i].p_offset), (size_t) phdrs[i].p_filesz);
-        //memset((void *) (phdrs[i].p_va + phdrs[i].p_filesz), 0, (size_t) (phdrs[i].p_memsz - phdrs[i].p_filesz));
+        memcpy((void *)phdrs[i].p_va, (void *)((uint64_t)binary + phdrs[i].p_offset), (size_t)phdrs[i].p_filesz);
+        // memset((void *) (phdrs[i].p_va + phdrs[i].p_filesz), 0, (size_t) (phdrs[i].p_memsz - phdrs[i].p_filesz));
 
-        if (image_start > (uintptr_t) (phdrs[i].p_va)) {
-            image_start = (uintptr_t) (phdrs[i].p_va);
+        if (image_start > (uintptr_t)(phdrs[i].p_va)) {
+            image_start = (uintptr_t)(phdrs[i].p_va);
         }
 
-        if (image_end < (uintptr_t) (phdrs[i].p_va + phdrs[i].p_filesz)) {
-            image_end = (uintptr_t) (phdrs[i].p_va + phdrs[i].p_filesz);
+        if (image_end < (uintptr_t)(phdrs[i].p_va + phdrs[i].p_filesz)) {
+            image_end = (uintptr_t)(phdrs[i].p_va + phdrs[i].p_filesz);
         }
     }
 
@@ -425,7 +425,7 @@ env_create(uint8_t *binary, size_t size, enum EnvType type) {
     if (type == ENV_TYPE_FS) {
         newenv->env_tf.tf_rflags |= FL_IOPL_3;
     } else {
-        newenv->env_tf.tf_rflags &= ~FL_IOPL_MASK; 
+        newenv->env_tf.tf_rflags &= ~FL_IOPL_MASK;
     }
 }
 

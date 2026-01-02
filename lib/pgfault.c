@@ -42,7 +42,7 @@ add_pgfault_handler(pf_handler_t handler) {
     if (!_pfhandler_inititiallized) {
         /* First time through! */
         // LAB 9: Your code here: DONE
-        
+
         if ((res = sys_alloc_region(CURENVID, (void *)(USER_EXCEPTION_STACK_TOP - PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0)) {
             goto end;
         }

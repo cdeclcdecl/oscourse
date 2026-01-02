@@ -118,7 +118,7 @@ gettime(void) {
         res = get_time();
         conf = get_time();
     } while (res != conf);
-    
+
 
     return res;
 }

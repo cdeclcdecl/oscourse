@@ -69,7 +69,6 @@ load_user_dwarf_info(struct Dwarf_Addrs *addrs) {
             }
         }
     }
-
 }
 
 #define UNKNOWN       "<unknown>"
@@ -134,7 +133,7 @@ debuginfo_rip(uintptr_t addr, struct Ripdebuginfo *info) {
     int line_num = 0;
     res = line_for_address(&addrs, addr - CALL_INSN_LEN, line_offset, &line_num);
     if (res < 0) goto error;
-    info->rip_line = line_num; 
+    info->rip_line = line_num;
 
     /* Find function name corresponding to given address.
      * Hint: note that we need the address of `call` instruction, but rip holds
@@ -152,7 +151,7 @@ debuginfo_rip(uintptr_t addr, struct Ripdebuginfo *info) {
         size_t copy_len = MIN(func_name_len, sizeof(info->rip_fn_name) - 1);
         memcpy(info->rip_fn_name, func_name, copy_len);
         info->rip_fn_name[copy_len] = '\0';
-        info->rip_fn_namelen = (int) func_name_len;
+        info->rip_fn_namelen = (int)func_name_len;
     } else {
         strcpy(info->rip_fn_name, UNKNOWN);
         info->rip_fn_namelen = sizeof(UNKNOWN) - 1;
@@ -184,7 +183,7 @@ find_function(const char *const fname) {
             char *strt = (char *)uefi_lp->SymbolTableStart;
             for (symt = (struct Elf64_Sym *)uefi_lp->SymbolTableStart; symt != (struct Elf64_Sym *)uefi_lp->SymbolTableEnd; symt++) {
                 if (!strcmp(&strt[symt->st_name], fname)) {
-                    offset = (uintptr_t) symt->st_value;
+                    offset = (uintptr_t)symt->st_value;
                 }
             }
         }

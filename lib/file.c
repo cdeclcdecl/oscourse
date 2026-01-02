@@ -104,7 +104,7 @@ devfile_flush(struct Fd *fd) {
  *
  * Returns:
  *  The number of bytes successfully read.
-*  < 0 on error. */
+ *  < 0 on error. */
 static ssize_t
 devfile_read(struct Fd *fd, void *buf, size_t n) {
     /* Make an FSREQ_READ request to the file system server after

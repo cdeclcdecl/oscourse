@@ -1,7 +1,7 @@
 /* User virtual page table helpers */
 
 #include <inc/lib.h>
-#include <inc/mmu.h>    
+#include <inc/mmu.h>
 
 extern volatile pte_t uvpt[];     /* VA of "virtual page table" */
 extern volatile pde_t uvpd[];     /* VA of current page directory */
@@ -63,7 +63,7 @@ foreach_shared_region(int (*fun)(void *start, void *end, void *arg), void *arg) 
     int res = 0;
     (void)fun, (void)arg;
 
-    
+
     for (uintptr_t addr = 0; addr < MAX_USER_ADDRESS; addr += PAGE_SIZE) {
         if (!(uvpml4[VPML4(addr)] & PTE_P) || !(uvpdp[VPDP(addr)] & PTE_P) || !(uvpd[VPD(addr)] & PTE_P)) {
             continue;
@@ -76,7 +76,6 @@ foreach_shared_region(int (*fun)(void *start, void *end, void *arg), void *arg) 
         if (res) {
             return res;
         }
-        
     }
 
     return res;

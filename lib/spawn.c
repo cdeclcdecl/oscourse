@@ -127,7 +127,7 @@ spawn(const char *prog, const char **argv) {
 
     close(fd);
 
-   
+
     /* Copy shared library state. */
     if ((res = foreach_shared_region(copy_shared_region, &child)) < 0)
         panic("copy_shared_region: %i", res);
@@ -284,7 +284,7 @@ map_segment(envid_t child, uintptr_t va, size_t memsz,
 
     if (filesz > HUGE_PAGE_SIZE || filesz > memsz) {
         return -E_INVALID_EXE;
-    } 
+    }
 
     /* Allocate filesz - memsz in child */
 
@@ -312,21 +312,20 @@ map_segment(envid_t child, uintptr_t va, size_t memsz,
 
     /* read filesz to UTEMP */
 
-    res = readn(fd, (void *) UTEMP, filesz);
+    res = readn(fd, (void *)UTEMP, filesz);
     assert(res == filesz);
 
     /* Map read section conents to child */
 
-    
 
-    if ((res = sys_map_region(CURENVID, (void *)UTEMP, child, (void *) va, filesz, perm))) {
+    if ((res = sys_map_region(CURENVID, (void *)UTEMP, child, (void *)va, filesz, perm))) {
         return res;
     }
 
-    
+
     /* Unmap it from parent */
-    
-    if ((res = sys_unmap_region(CURENVID, (void *) UTEMP, filesz))) {
+
+    if ((res = sys_unmap_region(CURENVID, (void *)UTEMP, filesz))) {
         return res;
     }
 

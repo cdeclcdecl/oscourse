@@ -133,8 +133,8 @@ trap_init(void) {
     // LAB 5: Your code here
 
 
-    idt[IRQ_OFFSET + IRQ_CLOCK] = GATE(0, GD_KT, clock_thdlr, 0); 
-    idt[IRQ_OFFSET + IRQ_TIMER] = GATE(0, GD_KT, timer_thdlr, 0); 
+    idt[IRQ_OFFSET + IRQ_CLOCK] = GATE(0, GD_KT, clock_thdlr, 0);
+    idt[IRQ_OFFSET + IRQ_TIMER] = GATE(0, GD_KT, timer_thdlr, 0);
 
     // LAB 8: Your code here
     /* Insert trap handlers into IDT */
@@ -306,8 +306,8 @@ trap_dispatch(struct Trapframe *tf) {
     case IRQ_OFFSET + IRQ_CLOCK:
     case IRQ_OFFSET + IRQ_TIMER:
         // LAB 4: Your code here
-        //rtc_timer_pic_handle();
-        //sched_yield();
+        // rtc_timer_pic_handle();
+        // sched_yield();
         // LAB 5: Your code here
         timer_for_schedule->handle_interrupts();
         vsys[VSYS_gettime] = gettime();
@@ -474,8 +474,7 @@ page_fault_handler(struct Trapframe *tf) {
      * causing pagefault during another pagefault */
     // LAB 9: Your code here: DONE
 
-    
-    
+
     uintptr_t va = cr2;
     if (!curenv->env_pgfault_upcall) {
         if (trace_pagefaults) {
@@ -508,20 +507,19 @@ page_fault_handler(struct Trapframe *tf) {
         cur_ux_rsp = USER_EXCEPTION_STACK_TOP - sizeof(struct UTrapframe);
     }
 
-    user_mem_assert(curenv, (void *) cur_ux_rsp, sizeof(struct UTrapframe), PROT_W);
+    user_mem_assert(curenv, (void *)cur_ux_rsp, sizeof(struct UTrapframe), PROT_W);
 
     /* Build local copy of UTrapframe */
     // LAB 9: Your code here: DONE
 
-    
+
     struct UTrapframe utf = {
-        .utf_err = tf->tf_err,
-        .utf_fault_va = va,
-        .utf_regs = tf->tf_regs,
-        .utf_rflags = tf->tf_rflags,
-        .utf_rip = tf->tf_rip,
-        .utf_rsp = tf->tf_rsp
-    };
+            .utf_err = tf->tf_err,
+            .utf_fault_va = va,
+            .utf_regs = tf->tf_regs,
+            .utf_rflags = tf->tf_rflags,
+            .utf_rip = tf->tf_rip,
+            .utf_rsp = tf->tf_rsp};
 
     tf->tf_rsp = cur_ux_rsp;
     tf->tf_rip = (uintptr_t)curenv->env_pgfault_upcall;
@@ -531,7 +529,7 @@ page_fault_handler(struct Trapframe *tf) {
 
     struct AddressSpace *old_as = switch_address_space(&curenv->address_space);
     set_wp(0);
-    nosan_memcpy((void *) cur_ux_rsp, (void *) &utf, sizeof(struct UTrapframe));
+    nosan_memcpy((void *)cur_ux_rsp, (void *)&utf, sizeof(struct UTrapframe));
     set_wp(1);
     switch_address_space(old_as);
 
@@ -545,6 +543,5 @@ page_fault_handler(struct Trapframe *tf) {
 
     env_run(curenv);
 
-    while (1)
-        ;
+    while (1);
 }

@@ -79,7 +79,7 @@ uint8_t
 checksum(uint8_t *ptr, size_t size) {
     uint32_t sum = 0;
     for (size_t i = 0; i < size; i++, ptr++) sum += *ptr;
-    return (uint8_t) sum & 0xFFU; 
+    return (uint8_t)sum & 0xFFU;
 }
 
 
@@ -87,7 +87,7 @@ RSDP *
 get_rsdp(void) {
     RSDP *rsd_ptr = (RSDP *)mmio_map_region((physaddr_t)uefi_lp->ACPIRoot, sizeof(RSDP));
 
-    if (checksum((uint8_t *) rsd_ptr, 20)) {
+    if (checksum((uint8_t *)rsd_ptr, 20)) {
         panic("get_rsdp: invalid RSDP checksum\n");
     }
     if (strncmp(rsd_ptr->Signature, "RSD PTR ", 8)) {
@@ -95,9 +95,9 @@ get_rsdp(void) {
     }
 
     if (rsd_ptr->Revision >= 2) {
-        if (checksum((uint8_t *) rsd_ptr, 36)) {
+        if (checksum((uint8_t *)rsd_ptr, 36)) {
             panic("get_rsdp: invalid XSDT checksum\n");
-        } 
+        }
     }
 
     return rsd_ptr;
@@ -121,7 +121,7 @@ acpi_find_table(const char *sign) {
 
 
     RSDP *rsd_ptr = get_rsdp();
-    ACPISDTHeader *xsdt = (ACPISDTHeader *)mmio_map_region((physaddr_t) rsd_ptr->XsdtAddress, sizeof(ACPISDTHeader));
+    ACPISDTHeader *xsdt = (ACPISDTHeader *)mmio_map_region((physaddr_t)rsd_ptr->XsdtAddress, sizeof(ACPISDTHeader));
 
     if (strncmp(xsdt->Signature, "XSDT", 4)) {
         panic("acpi_find_table: invalid XSDT signature\n");
@@ -141,9 +141,9 @@ acpi_find_table(const char *sign) {
     if (sum) {
         panic("acpi_find_table: invalid RSDT/XSDT checksum\n");
     }
-    
+
     uint8_t *entries_start = (uint8_t *)xsdt + sizeof(ACPISDTHeader);
-    size_t entry_count = (xsdt->Length - sizeof(ACPISDTHeader)) / sizeof(uint64_t); 
+    size_t entry_count = (xsdt->Length - sizeof(ACPISDTHeader)) / sizeof(uint64_t);
 
     for (size_t i = 0; i < entry_count; i++) {
 
@@ -153,11 +153,11 @@ acpi_find_table(const char *sign) {
         if (addr == 0) continue;
 
         ACPISDTHeader *hdr = (ACPISDTHeader *)mmio_map_region((physaddr_t)(addr), sizeof(ACPISDTHeader));
-        
+
         if (strncmp(hdr->Signature, sign, 4)) {
             continue;
         }
-        
+
         hdr = (ACPISDTHeader *)mmio_remap_last_region((physaddr_t)(addr), (void *)hdr, sizeof(ACPISDTHeader), hdr->Length);
 
         return hdr;
@@ -254,7 +254,7 @@ get_fadt(void) {
         panic("get_fadt: couldn't resolve FADT\n");
     }
 
-    //fadt_ptr = (FADT *)mmio_remap_last_region((physaddr_t) fadt_ptr, (void *)fadt_ptr, sizeof(ACPISDTHeader), fadt_ptr->h.Length);
+    // fadt_ptr = (FADT *)mmio_remap_last_region((physaddr_t) fadt_ptr, (void *)fadt_ptr, sizeof(ACPISDTHeader), fadt_ptr->h.Length);
 
     uint8_t *ptr = (uint8_t *)fadt_ptr;
     uint32_t sum = 0;
@@ -282,11 +282,11 @@ get_hpet(void) {
     if (!hpet_ptr) {
         panic("get_hpet: couldn't resolve HPET\n");
     }
-    //hpet_ptr = (HPET *)mmio_remap_last_region((physaddr_t) hpet_ptr, (void *)hpet_ptr, sizeof(ACPISDTHeader), hpet_ptr->h.Length);
-    
+    // hpet_ptr = (HPET *)mmio_remap_last_region((physaddr_t) hpet_ptr, (void *)hpet_ptr, sizeof(ACPISDTHeader), hpet_ptr->h.Length);
+
     uint8_t *ptr = (uint8_t *)hpet_ptr;
     uint32_t sum = 0;
-    
+
     for (size_t i = 0; i < sizeof(HPET); i++) {
         sum += *ptr;
         ptr++;
@@ -296,7 +296,7 @@ get_hpet(void) {
 
     if (sum) {
         panic("get_hpet: invalid HPET checksum\n");
-    } 
+    }
     return hpet_ptr;
 }
 
@@ -415,7 +415,7 @@ hpet_enable_interrupts_tim1(void) {
     // LAB 5: Your code here
 
     hpetReg->GEN_CONF |= HPET_LEG_RT_CNF;
-    
+
     hpetReg->TIM1_CONF = 0;
     hpetReg->TIM1_CONF |= HPET_TN_TYPE_CNF;
     hpetReg->TIM1_CONF |= HPET_TN_INT_ENB_CNF;
@@ -453,7 +453,7 @@ hpet_cpu_frequency(void) {
 
     uint64_t hpet_ticks = hpet_get_main_cnt() - hpet_start;
     uint64_t tsc_ticks = read_tsc() - tsc_start;
-    cpu_freq = (tsc_ticks * hpetFreq) / hpet_ticks; 
+    cpu_freq = (tsc_ticks * hpetFreq) / hpet_ticks;
 
     return cpu_freq;
 }
