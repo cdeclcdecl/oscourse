@@ -13,6 +13,10 @@
 #define BF_COMPILER_IMPLEMENTED 0
 #define BF_EXECUTOR_IMPLEMENTED 0
 
+#define BF_COMPILER_FILE "bf_compiler"
+#define BF_EXECUTOR_FILE "bf_jit_interpreter"
+#define BF_REPL_FILE "brainfuck"
+
 /*
  * System constants
  */
@@ -128,6 +132,7 @@ typedef struct {
     bool optimize_time;
 } bf_compiler_context_t;
 
+
 /*
  * REPL context structure
  * Holds global state for the entire session
@@ -155,6 +160,7 @@ typedef struct {
 
     int output_format;
     const char *input_file;
+    int fd;
 } bf_repl_ctx_t;
 
 /*
