@@ -22,7 +22,10 @@
  */
 #define BF_TAPE_SIZE    30000           // Standard Brainfuck tape size (30KB)
 #define BF_TAPE_ADDR    0x500000        // Fixed address for BF tape in user space
-#define MAX_BF_MSG_LEN (PAGE_SIZE - 8) // Max BF message size per IPC message
+#define REPL_TEMP_ADDR ((char *)0xa00000)    // Address for temporarily mappings
+#define COMPILER_TEMP_ADDR ((char *) 0xb00000)
+#define EXECUTOR_TEMP_ADDR ((char *) 0xc00000)
+#define MAX_BF_MSG_LEN (PAGE_SIZE)  // Max BF message size per IPC message
 
 /*
  * IPC message magic numbers
@@ -42,44 +45,6 @@ enum {
     BF_CYCLE_START  = '[',
     BF_CYCLE_END    = ']',
 };
-
-
-
-
-/*
- * BF source code message structure
- * Sent from REPL to compiler via IPC
- * Must fit within one page (4KB)
- */
-typedef struct __attribute__((packed)) {
-    uint32_t magic;             // BF_MAGIC_SOURCE
-    uint32_t code_len;          // Length of BF source code
-    char code[MAX_BF_MSG_LEN]; // Null-terminated BF source code
-} bf_source_msg_t;
-
-/*
- * BF bytecode message structure
- * Sent from compiler to executor via IPC
- * Contains x86 machine code ready for execution
- */
-typedef struct __attribute__((packed)) {
-    uint32_t magic;               // BF_MAGIC_EXEC
-    uint32_t code_size;           // Size of generated machine code (bytes)
-    uint32_t tape_size;           // Required tape size (for future ASAN)
-    uint8_t code[PAGE_SIZE - 12]; // Raw x86 machine code
-} bf_bytecode_msg_t;
-
-/*
- * Execution result structure
- * Sent from executor to REPL via IPC
- */
-typedef struct __attribute__((packed)) {
-    uint32_t magic;              // BF_MAGIC_RESULT
-    int32_t status;              // 0 = success, negative = error code
-    uint32_t output_len;         // Length of captured output
-    char output[PAGE_SIZE - 12]; // Execution output (ASCII/HEX/DEC per flags)
-} bf_result_msg_t;
-
 
 /*
  * Error codes for status field
@@ -166,6 +131,10 @@ typedef struct {
     int output_format;
     const char *input_file;
     const char *output_file;
+    char *send_ipc_buf;
+    size_t send_ipc_size;
+    uint8_t *receive_ipc_buf;
+    size_t receive_ipc_size;
     int fd;
 } bf_repl_ctx_t;
 

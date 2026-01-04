@@ -28,6 +28,8 @@ bf_repl_ctx_t repl_ctx = {
     .output_format = BF_OUTPUT_ASCII,
     .input_file = NULL,
     .fd = -1,
+    .send_ipc_buf = NULL,
+    .receive_ipc_buf = NULL,
 };
 
 #define LOG(msg, ...) if (repl_ctx.debug_mode) { cprintf("[REPL]: " msg, ##__VA_ARGS__); }
@@ -86,7 +88,13 @@ void pure_exec(char *bf, size_t code_size) {
                 cputchar(*ptr);
                 break;
             case ',':
-                *ptr = getchar();
+                nest = getchar();
+                if ((nest & 0xff) == 0xf4) {
+                    cprintf("^D\n");
+                    return;
+                }
+                *ptr = (uint8_t) nest;
+                cputchar(nest);
                 break;
             case '[':
                 if (*ptr == 0) {
@@ -140,6 +148,16 @@ void cleanup_resources(void) {
     if (repl_ctx.fd != -1) {
         LOG("Closing input file descriptor\n");
         close(repl_ctx.fd);
+    }
+
+    if (repl_ctx.send_ipc_buf != NULL) {
+        LOG("Freeing send IPC buffer\n");
+        sys_unmap_region(0, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    }
+
+    if (repl_ctx.receive_ipc_buf != NULL) {
+        LOG("Freeing receive IPC buffer\n");
+        sys_unmap_region(0, repl_ctx.receive_ipc_buf, PAGE_SIZE);
     }
 
     LOG("Resource cleanup complete\n");
@@ -327,11 +345,11 @@ envid_t spawn_compiler(void) {
     envid_t compiler_id;
 
     if (repl_ctx.optimize_time) {
-        argv[++cur] = "--Otime";
+        argv[cur++] = "--Otime";
     }
 
     if (repl_ctx.debug_mode) {
-        argv[++cur] = "-d";
+        argv[cur++] = "-d";
     }
 
     LOG("Spawning compiler process...\n");
@@ -364,6 +382,24 @@ envid_t spawn_executor(void) {
     return executor_id;
 }
 
+/*
+ * COMPILER IPC COMMUNICATION
+ * Sends raw data page to compiler/executor process via IPC.
+ */
+void send_to_compiler(void) {
+    LOG("Sendinfg to compiler %lu bytes\n", repl_ctx.send_ipc_size);
+    ipc_send(repl_ctx.compiler_id, 0, repl_ctx.send_ipc_buf, repl_ctx.send_ipc_size, PROT_RW);
+}
+
+/*
+ * EXECUTOR IPC COMMUNICATION
+ * Sends page with bytecode to executor process via IPC.
+ *
+ */
+void send_to_executor(void) {
+    ipc_send(repl_ctx.executor_id, 0, repl_ctx.send_ipc_buf, repl_ctx.send_ipc_size, PROT_RW);
+}
+
 
 /*
  * REPL LOOP
@@ -383,8 +419,7 @@ repl_loop(void) {
     // Interactive session management
     LOG("Starting interactive REPL loop...\n");
 
-    char input_buffer[PAGE_SIZE];
-    int num_pages = 0; 
+    char input_buf[PAGE_SIZE];
     size_t buf_pose = 0;
     int c;
 
@@ -413,7 +448,7 @@ repl_loop(void) {
             }
 
             if (buf_pose < PAGE_SIZE - 1) {
-                input_buffer[buf_pose++] = (char)c;
+                input_buf[buf_pose++] = (char)c;
                 cputchar(c);
             }
         }
@@ -432,18 +467,18 @@ repl_loop(void) {
 
         cprintf("\n");
 
-        input_buffer[buf_pose] = '\0';
+        input_buf[buf_pose] = '\0';
 
-        if (buf_pose > 0 && input_buffer[0] == '!') {
-            LOG("Processing REPL command: %s\n", input_buffer);
-            if (strncmp(input_buffer, "!quit", 5) == 0) {
+        if (buf_pose > 0 && input_buf[0] == '!') {
+            LOG("Processing REPL command: %s\n", input_buf);
+            if (strncmp(input_buf, "!quit", 5) == 0) {
                 LOG("Received !quit command, exiting REPL loop\n");
                 cprintf("Exiting REPL...\n");
                 break;
-            } else if (strncmp(input_buffer, "!help", 5) == 0) {
+            } else if (strncmp(input_buf, "!help", 5) == 0) {
                 cprintf("%s", repl_help_msg);
-            } else if (strncmp(input_buffer, "!fmt ", 5) == 0) {
-                char *fmt = input_buffer + 5;
+            } else if (strncmp(input_buf, "!fmt ", 5) == 0) {
+                char *fmt = input_buf + 5;
                 if (strncmp(fmt, "ascii", 5) == 0) {
                     repl_ctx.output_format = BF_OUTPUT_ASCII;
                     cprintf("Output format set to ASCII\n");
@@ -456,7 +491,7 @@ repl_loop(void) {
                 } else {
                     cprintf("Error: Unknown format '%s'. Use ascii, hex, or dec.\n", fmt);
                 }
-            } else if (strncmp(input_buffer, "!reset", 6) == 0) {
+            } else if (strncmp(input_buf, "!reset", 6) == 0) {
                 cprintf("Resetting REPL state...\n");
                 sys_env_destroy(repl_ctx.executor_id);
                 repl_ctx.executor_id = spawn_executor();
@@ -464,7 +499,7 @@ repl_loop(void) {
                     err_exit();
                 }
             } else {
-                cprintf("Error: Unknown command '%s'. Type '!help' for assistance.\n", input_buffer);
+                cprintf("Error: Unknown command '%s'. Type '!help' for assistance.\n", input_buf);
             }
             buf_pose = 0;
             continue;
@@ -476,13 +511,20 @@ repl_loop(void) {
         }
 
         LOG("Received Brainfuck code input (%zu bytes)\n", buf_pose);
-        LOG("Input code:\n%s\n", input_buffer);
+        LOG("Input code:\n%s\n", input_buf);
 
-        
-        // TODO: Send input_buffer to compiler and executor via IPC
+        int perm = 0;
+        LOG("Copying memory into sending buf\n");
+        memcpy((void *) repl_ctx.send_ipc_buf, (void *) input_buf, buf_pose);
+        repl_ctx.send_ipc_size = buf_pose;
+        LOG("Copied memory from buf\n");
+        /* Send only the meaningful bytes (no message headers) */
+        send_to_compiler();
 
-        // testing pure execution
-        pure_exec((char *)input_buffer, buf_pose);
+        ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &buf_pose, &perm);
+        LOG("Received message from compiler, ")
+        /* testing pure execution on received data */
+        pure_exec((char *)repl_ctx.receive_ipc_buf, buf_pose);
 
         buf_pose = 0;
     }
@@ -570,6 +612,22 @@ umain(int argc, char **argv) {
 
         complile_only_usage();
     }
+
+    res = sys_alloc_region(0, (void *)REPL_TEMP_ADDR, PAGE_SIZE, PROT_RW);
+    if (res < 0) {
+        cprintf("Error: Failed to allocate IPC buffer for compiler\n");
+        err_exit();
+    }
+
+    repl_ctx.send_ipc_buf = (void *)REPL_TEMP_ADDR;
+
+    res = sys_alloc_region(0, (void *)(REPL_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW);
+    if (res < 0) {
+        cprintf("Error: Failed to allocate IPC buffer for executor\n");
+        err_exit();
+    }
+
+    repl_ctx.receive_ipc_buf = (void *) (REPL_TEMP_ADDR + PAGE_SIZE);
 
     // if user wants interactive REPL session
     if (repl_ctx.interactive) {

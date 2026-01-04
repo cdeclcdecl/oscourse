@@ -50,7 +50,11 @@ ipc_recv(envid_t *from_env_store, void *pg, size_t *size, int *perm_store) {
         }
 
         if (size) {
-            *size = PAGE_SIZE;
+            if (pg != (void *)MAX_USER_ADDRESS) {
+                *size = thisenv->env_ipc_maxsz;
+            } else {
+                *size = (size_t)thisenv->env_ipc_value;
+            }
         }
 
         return thisenv->env_ipc_value;

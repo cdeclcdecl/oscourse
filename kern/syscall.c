@@ -418,10 +418,18 @@ sys_ipc_try_send(envid_t envid, uint32_t value, uintptr_t srcva, size_t size, in
         //     return -E_INVAL;
         // }
 
-        size_t min = MIN(size, dst->env_ipc_dstva);
-
-        if (map_region(&dst->address_space, dst->env_ipc_dstva, &curenv->address_space, srcva, min, perm | PROT_USER_) < 0) {
-            return -E_NO_MEM;
+        size_t min = MIN(size, dst->env_ipc_maxsz);
+        if (min == 0) {
+            dst->env_ipc_perm = 0;
+        } else {
+            size_t map_size = (min + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            if (map_region(&dst->address_space, dst->env_ipc_dstva,
+                           &curenv->address_space, srcva, map_size,
+                           perm | PROT_USER_) < 0) {
+                return -E_NO_MEM;
+            }
+            dst->env_ipc_perm = perm;
+            dst->env_ipc_maxsz = min;
         }
 
         dst->env_ipc_perm = perm;

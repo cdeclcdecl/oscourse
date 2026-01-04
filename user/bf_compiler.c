@@ -196,7 +196,7 @@ static void optimize_instructions(void) {
         i += run;
     }
     optimized[w] = '\0';
-    compiler_ctx.source = optimized;
+    memcpy((void *) compiler_ctx.source, (const void *) optimized, w);
     compiler_ctx.src_len = w;
 }
 
@@ -210,12 +210,12 @@ static int compile_bf_to_x86(void) {
 
     optimize_instructions();
 
-    bf_bytecode_msg_t *out = (bf_bytecode_msg_t *)compiler_ctx.code_buf;
-    out->magic = BF_MAGIC_EXEC;
-    out->tape_size = BF_TAPE_SIZE;
-    if (compiler_ctx.src_len > sizeof(out->code)) return -BF_ERR_OVERFLOW;
-    out->code_size = compiler_ctx.src_len;
-    memcpy(out->code, compiler_ctx.source, compiler_ctx.src_len);
+    /* Produce raw bytecode payload in the code buffer (no magic headers)
+     * Receiver will use the IPC-provided size to determine valid bytes.
+     */
+    if (compiler_ctx.src_len > PAGE_SIZE) return -BF_ERR_OVERFLOW;
+    memcpy(compiler_ctx.code_buf, compiler_ctx.source, compiler_ctx.src_len);
+    compiler_ctx.code_offset = compiler_ctx.src_len;
     return 0;
 }
 
@@ -224,17 +224,7 @@ static int compile_bf_to_x86(void) {
  * Sends compiled page back to the REPL/executor owner via IPC.
  */
 static void send_to_repl(void) {
-    bf_bytecode_msg_t *out = (bf_bytecode_msg_t *)compiler_ctx.code_buf;
-    int res;
-    do {
-        res = sys_ipc_try_send(compiler_ctx.repl_id, 0, out, PAGE_SIZE, PROT_RW);
-        if (res == -E_IPC_NOT_RECV) {
-            sys_yield();
-        } else if (res < 0) {
-            cprintf("bf_compiler: send failed %d\n", res);
-            return;
-        }
-    } while (res == -E_IPC_NOT_RECV);
+    ipc_send(compiler_ctx.repl_id, BF_MAGIC_EXEC, compiler_ctx.code_buf, compiler_ctx.code_offset, PROT_RW);
 }
 
 /*
@@ -244,80 +234,91 @@ static void send_to_repl(void) {
  *  
  */
 void umain(int argc, char **argv) {
+
+    LOG("bf_compiler starting up...\n");
+
     if (parse_arguments(argc, argv) < 0) {
         cprintf("%s", usage_msg);
         return;
     }
 
     // Allocate a scratch page for generated output.
-    if (sys_alloc_region(0, (void *)UTEMP, PAGE_SIZE, PROT_RW) < 0) {
+    if (sys_alloc_region(0, (void *)COMPILER_TEMP_ADDR, PAGE_SIZE, PROT_RW) < 0) {
         cprintf("bf_compiler: failed to allocate code buffer page\n");
         return;
     }
-    compiler_ctx.code_buf = (uint8_t *)UTEMP;
+    compiler_ctx.code_buf = (uint8_t *)COMPILER_TEMP_ADDR;
+    compiler_ctx.code_offset = 0;
 
-    return;
+    LOG("Allocated code buffer at %p\n", compiler_ctx.code_buf);
 
-    // Temporarily deactivated code below for simplification.
+    if (compiler_ctx.REPL_mode) {
 
-    /*
-    if (g_test_mode) {
-        // Very small self-checks for syntax validator.
-        const char *valid = "++[-->++]";
-        const char *invalid = "[++";
-        compiler_ctx.source = valid;
-        compiler_ctx.src_len = strlen(valid);
-        int r1 = validate_syntax();
-        compiler_ctx.source = invalid;
-        compiler_ctx.src_len = strlen(invalid);
-        int r2 = validate_syntax();
-        cprintf("bf_compiler self-test: valid=%d invalid=%d\n", r1, r2);
-        return;
-    }
+        LOG("Entering REPL mode...\n");
 
-    if (g_compile_once) {
-        compiler_ctx.source = g_single_source;
-        compiler_ctx.src_len = strlen(g_single_source);
-        int res = compile_bf_to_x86();
-        if (res < 0) {
-            cprintf("bf_compiler: compile failed (%d)\n", res);
+        // REPL mode: wait for BF source pages and respond with compiled output.
+        if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
+            cprintf("bf_compiler: failed to allocate receive buffer\n");
             return;
         }
-        send_to_repl();
+
+        compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
+
+        LOG("Allocated receive buffer at %p\n", (void *)(COMPILER_TEMP_ADDR + PAGE_SIZE));
+
+        while (1) {
+            int perm = 0;
+            LOG("waiting for source code from REPL\n");
+            int32_t val = ipc_recv(&compiler_ctx.repl_id, (void *) compiler_ctx.source, &compiler_ctx.src_len, &perm);
+            if (val < 0) {
+                cprintf("bf_compiler: ipc_recv error %d\n", val);
+                continue;
+            }
+
+            LOG("Received IPC message from REPL %08x, size %zu bytes\n",
+                compiler_ctx.repl_id, compiler_ctx.src_len);
+            
+            LOG("src_len: %zu\n", compiler_ctx.src_len);
+            /* Treat IPC payload as raw bytes: validate reported size and use the receive buffer */
+            if (compiler_ctx.src_len == 0 || compiler_ctx.src_len > MAX_BF_MSG_LEN) {
+                cprintf("bf_compiler: invalid source size %zu\n", compiler_ctx.src_len);
+                continue;
+            }
+
+            compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
+
+            int res = compile_bf_to_x86();
+            if (res < 0) {
+                cprintf("bf_compiler: compile failed (%d)\n", res);
+                continue;
+            }
+
+            LOG("sending bytecode to REPL\n");
+            send_to_repl();
+
+            LOG("Compiled and sent bytecode of size %zu to REPL %08x\n", compiler_ctx.code_offset, compiler_ctx.repl_id);
+
+        }
+
+        // unreachable
+    }
+
+    // File-based mode: read input file, compile, write output file.
+    LOG("Entering file-based compilation mode...\n");
+
+    int fd_in = open(compiler_ctx.input_file, O_RDONLY);
+    if (fd_in < 0) {
+        cprintf("bf_compiler: failed to open input file %s\n", compiler_ctx.input_file);
         return;
     }
-    // Normal mode: wait for BF source pages and respond with compiled output.
-    if (sys_alloc_region(0, (void *)(UTEMP + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
-        cprintf("bf_compiler: failed to allocate receive buffer\n");
-        return;
+
+    ssize_t n = read(fd_in, compiler_ctx.code_buf, PAGE_SIZE);
+    if (n < 0) {
+        cprintf("bf_compiler: failed to read input file %s\n", compiler_ctx.input_file);
+        close(fd_in);
     }
 
-    while (1) {
-        size_t sz = PAGE_SIZE;
-        envid_t from = 0;
-        int perm = 0;
-        int32_t val = ipc_recv(&from, (void *)(UTEMP + PAGE_SIZE), &sz, &perm);
-        if (val < 0) {
-            cprintf("bf_compiler: ipc_recv error %d\n", val);
-            continue;
-        }
+    // TODO
 
-        bf_source_msg_t *msg = (bf_source_msg_t *)(UTEMP + PAGE_SIZE);
-        if (msg->magic != BF_MAGIC_SOURCE || msg->code_len >= MAX_BF_MSG_LEN) {
-            cprintf("bf_compiler: invalid source message\n");
-            continue;
-        }
-
-        compiler_ctx.source = msg->code;
-        compiler_ctx.src_len = msg->code_len;
-        compiler_ctx.repl_id = from; // reply directly to sender
-
-        int res = compile_bf_to_x86();
-        if (res < 0) {
-            cprintf("bf_compiler: compile failed (%d)\n", res);
-            continue;
-        }
-        send_to_repl();
-    }
-    */
+    return;
 }
