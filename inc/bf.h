@@ -22,30 +22,28 @@
  */
 #define BF_TAPE_SIZE    30000           // Standard Brainfuck tape size (30KB)
 #define BF_TAPE_ADDR    0x500000        // Fixed address for BF tape in user space
-#define MAX_BF_CODE_LEN (PAGE_SIZE - 8) // Max BF code size per IPC message
+#define MAX_BF_MSG_LEN (PAGE_SIZE - 8) // Max BF message size per IPC message
 
 /*
  * IPC message magic numbers
  * Used to identify message types in shared pages
  */
-#define BF_MAGIC_SOURCE 0xBFC0DE01 // BF source code from REPL to compiler
-#define BF_MAGIC_EXEC   0xBFC0DE02 // Executable bytecode from compiler to REPL or from REPL to executor
-#define BF_MAGIC_RESULT 0xBFC0DE03 // Execution result from executor to REPL
+#define BF_MAGIC_SOURCE         0xBFC0DE01 // BF source code from REPL to compiler
+#define BF_MAGIC_EXEC           0xBFC0DE02 // Executable bytecode from compiler to REPL or from REPL to executor
+#define BF_MAGIC_RESULT         0xBFC0DE03 // Execution result from executor to REPL
 
 enum {
-    BC_CURSOR_RIGHT = '>',
-    BC_CURSOR_ADD   = '{',
-    BC_CURSOR_LEFT  = '<',
-    BC_CURSOR_SUB   = '}',
-    BC_INCREMENT    = '+',
-    BC_ADD          = '*',
-    BC_SUB          = '/',
-    BC_DECREMENT    = '-',
-    BC_OUTPUT       = '.',
-    BC_INPUT        = ',',
-    BC_CYCLE_START  = '[',
-    BC_CYCLE_END    = ']',
+    BF_CURSOR_RIGHT = '>',
+    BF_CURSOR_LEFT  = '<',
+    BF_INCREMENT    = '+',
+    BF_DECREMENT    = '-',
+    BF_OUTPUT       = '.',
+    BF_INPUT        = ',',
+    BF_CYCLE_START  = '[',
+    BF_CYCLE_END    = ']',
 };
+
+
 
 
 /*
@@ -56,7 +54,7 @@ enum {
 typedef struct __attribute__((packed)) {
     uint32_t magic;             // BF_MAGIC_SOURCE
     uint32_t code_len;          // Length of BF source code
-    char code[MAX_BF_CODE_LEN]; // Null-terminated BF source code
+    char code[MAX_BF_MSG_LEN]; // Null-terminated BF source code
 } bf_source_msg_t;
 
 /*
@@ -81,6 +79,7 @@ typedef struct __attribute__((packed)) {
     uint32_t output_len;         // Length of captured output
     char output[PAGE_SIZE - 12]; // Execution output (ASCII/HEX/DEC per flags)
 } bf_result_msg_t;
+
 
 /*
  * Error codes for status field
@@ -112,11 +111,12 @@ enum {
  *   src_len - Length of source code in bytes
  *   code_buf - Page-aligned buffer for generated machine code
  *   code_offset - Current write position in code buffer
+ *   debug_mode - Flag for enabling debug logging (-d)
+ *   optimize_time - Flag for time optimizations (-Otime)
  *   loop_stack - Stack tracking positions of '[' for backpatching
  *   loop_depth - Current depth of nested loops (for bracket validation)
- *   executor_id - Environment ID of executor process (0 in test mode)
- *   optimize_time - Flag enabling time optimizations (-Otime)
- *   test_mode - Flag indicating self-test mode (-t)
+ *   input_file - Optional input file name for source code
+ *   repl_id - Environment ID of REPL process (for IPC)
  */
 typedef struct {
     const char *source;
@@ -124,12 +124,17 @@ typedef struct {
     
     uint8_t *code_buf;
     size_t code_offset;
-    
+
     int loop_stack[256];
     int loop_depth;
     
-    envid_t repl_id;
+    bool REPL_mode;
+    bool debug_mode;
     bool optimize_time;
+
+    const char *input_file;
+    const char *output_file;
+    envid_t repl_id;
 } bf_compiler_context_t;
 
 
@@ -160,6 +165,7 @@ typedef struct {
 
     int output_format;
     const char *input_file;
+    const char *output_file;
     int fd;
 } bf_repl_ctx_t;
 

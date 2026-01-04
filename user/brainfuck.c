@@ -35,8 +35,9 @@ bf_repl_ctx_t repl_ctx = {
 char usage_msg[] =
     "Usage: brainfuck [options]\n"
     "  -bc (--bytecode)         : Compile only (no execution)\n"
+    "  -o (--output) <file>     : Specify output file for bytecode (only for -bc option) (default: out.bc)\n"
     "  -e (--exec)              : Execute precompiled bytecode\n"
-    "  -O (--optimize)          : Enable time optimizations\n"
+    "  -Otime (--optimize)      : Enable time optimizations\n"
     "  -p (--print) <format>    : Set output format (ascii/hex/dec)\n"
     "  -h (--help)              : Show this help message\n"
     "  -d (--debug)             : Enable debug mode\n"
@@ -51,6 +52,105 @@ char repl_help_msg[] =
     "    !fmt ascii/hex/dec     Set output format\n"
     "    !reset                 Reset REPL state\n"
     "    !quit                  Exit the REPL\n";
+
+
+// for testing purposes
+// no syntax checks, optimizations, or IPC yet
+// just pure interpretation
+void pure_exec(char *bf, size_t code_size) {
+    LOG("Executing bytecode of size %zu\n", code_size);
+    uint8_t tape[BF_TAPE_SIZE] = {0};
+    uint8_t *ptr = tape;// start in middle
+    int nest = 1;
+    for (int i = 0; i < code_size; i++) {
+        switch (bf[i]) {
+            case '>':
+                ptr++;
+                if (ptr >= tape + BF_TAPE_SIZE) {
+                    ptr = tape;
+                }
+                break;
+            case '<':
+                ptr--;
+                if (ptr < tape) {
+                    ptr = tape + BF_TAPE_SIZE - 1;
+                }
+                break;
+            case '+':
+                *ptr += 1;
+                break;
+            case '-':
+                *ptr -= 1;
+                break;
+            case '.':
+                cputchar(*ptr);
+                break;
+            case ',':
+                *ptr = getchar();
+                break;
+            case '[':
+                if (*ptr == 0) {
+                    nest = 1;
+                    while (++i < code_size && nest > 0) {
+                        if (bf[i] == '[') nest++;
+                        else if (bf[i] == ']') nest--;
+                    }
+                } 
+                break;
+            case ']':
+                if (*ptr != 0) {
+                    nest = 1;
+                    while (nest > 0 && --i >= 0) {
+                        if (bf[i] == ']') nest++;
+                        else if (bf[i] == '[') nest--;
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+        //cprintf("value: %u, char: %c, pos: %u\n", *ptr, *ptr, ptr - tape);
+    }
+}
+
+ /*
+ * RESOURCE CLEANUP
+ *
+ * RESPONSIBILITIES:
+ *   1. Terminate child processes:
+ *        sys_env_destroy(compiler_id)
+ *        sys_env_destroy(executor_id)
+ *   2. Close open file descriptors
+ *   3. Free allocated memory buffers
+ *
+ */
+void cleanup_resources(void) {
+    LOG("Cleaning up resources...\n");
+
+    if (repl_ctx.compiler_id != 0) {
+        LOG("Destroying compiler process %08x\n", repl_ctx.compiler_id);
+        sys_env_destroy(repl_ctx.compiler_id);
+    }
+
+    if (repl_ctx.executor_id != 0) {
+        LOG("Destroying executor process %08x\n", repl_ctx.executor_id);
+        sys_env_destroy(repl_ctx.executor_id);
+    }
+
+    if (repl_ctx.fd != -1) {
+        LOG("Closing input file descriptor\n");
+        close(repl_ctx.fd);
+    }
+
+    LOG("Resource cleanup complete\n");
+    return;
+}
+
+void err_exit(void) {
+    LOG("Exiting with error\n");
+    cleanup_resources();
+    exit();
+}
 
 /*
  * OUTPUT FORMATTER
@@ -148,6 +248,14 @@ int parse_repl_arguments(int argc, char **argv) {
             // printing help message
             cprintf("%s", usage_msg);
             exit();
+        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            // processing output file
+            if (i + 1 >= argc) {
+                cprintf("Error: -o requires a file argument\n\n");
+                return -1;
+            }
+            i++;
+            repl_ctx.output_file = argv[i];
         } else {
             // processing input file
             if (repl_ctx.input_file == NULL) {
@@ -176,7 +284,16 @@ int parse_repl_arguments(int argc, char **argv) {
         cprintf("Error: -e requires an input file\n\n");
         return -1;
     }
+
+    if (repl_ctx.compile_only && repl_ctx.output_file == NULL) {
+        repl_ctx.output_file = "out.bc";
+    }
     
+    if (!repl_ctx.compile_only && repl_ctx.output_file != NULL) {
+        cprintf("Error: -o option can only be used with -bc\n\n");
+        return -1;
+    }
+
     // set interactive mode depending on flags
     if (!repl_ctx.execute_only && repl_ctx.input_file == NULL && !repl_ctx.compile_only) {
         repl_ctx.interactive = true;
@@ -189,38 +306,7 @@ int parse_repl_arguments(int argc, char **argv) {
     return 0;
 }
 
-/*
- * RESOURCE CLEANUP
- *
- * RESPONSIBILITIES:
- *   1. Terminate child processes:
- *        sys_env_destroy(compiler_id)
- *        sys_env_destroy(executor_id)
- *   2. Close open file descriptors
- *   3. Free allocated memory buffers
- *
- */
-void cleanup_resources(void) {
-    LOG("Cleaning up resources...\n");
 
-    if (repl_ctx.compiler_id != 0) {
-        LOG("Destroying compiler process %08x\n", repl_ctx.compiler_id);
-        sys_env_destroy(repl_ctx.compiler_id);
-    }
-
-    if (repl_ctx.executor_id != 0) {
-        LOG("Destroying executor process %08x\n", repl_ctx.executor_id);
-        sys_env_destroy(repl_ctx.executor_id);
-    }
-
-    if (repl_ctx.fd != -1) {
-        LOG("Closing input file descriptor\n");
-        close(repl_ctx.fd);
-    }
-
-    LOG("Resource cleanup complete\n");
-    return;
-}
 
 /*
  * PROCESS SPAWNER
@@ -236,8 +322,17 @@ void cleanup_resources(void) {
 envid_t spawn_compiler(void) {
     // Still TODO : cli arguments are not processed yet
 
-    char *argv[4] = {BF_COMPILER_FILE, NULL, NULL, NULL};
+    size_t cur = 2;
+    char *argv[4] = {BF_COMPILER_FILE, "--REPL", NULL, NULL};
     envid_t compiler_id;
+
+    if (repl_ctx.optimize_time) {
+        argv[++cur] = "--Otime";
+    }
+
+    if (repl_ctx.debug_mode) {
+        argv[++cur] = "-d";
+    }
 
     LOG("Spawning compiler process...\n");
 
@@ -270,6 +365,19 @@ envid_t spawn_executor(void) {
 }
 
 
+/*
+ * REPL LOOP
+ *
+ * RESPONSIBILITIES:
+ *   1. Read user input line-by-line
+ *   2. Process special commands (!help, !fmt, !reset, !quit)
+ *   3. Send Brainfuck code to compiler via IPC
+ *   4. Receive compiled bytecode from compiler via IPC
+ *   5. Send bytecode to executor via IPC
+ *   6. Receive execution output from executor via IPC
+ *   7. Format and display output according to user settings
+ *   8. repeat until !quit or EOF
+ */
 void
 repl_loop(void) {
     // Interactive session management
@@ -349,7 +457,12 @@ repl_loop(void) {
                     cprintf("Error: Unknown format '%s'. Use ascii, hex, or dec.\n", fmt);
                 }
             } else if (strncmp(input_buffer, "!reset", 6) == 0) {
-                cprintf("REPL state reset (not fully implemented yet)\n");
+                cprintf("Resetting REPL state...\n");
+                sys_env_destroy(repl_ctx.executor_id);
+                repl_ctx.executor_id = spawn_executor();
+                if (repl_ctx.executor_id == 0) {
+                    err_exit();
+                }
             } else {
                 cprintf("Error: Unknown command '%s'. Type '!help' for assistance.\n", input_buffer);
             }
@@ -365,12 +478,44 @@ repl_loop(void) {
         LOG("Received Brainfuck code input (%zu bytes)\n", buf_pose);
         LOG("Input code:\n%s\n", input_buffer);
 
-        buf_pose = 0;
+        
         // TODO: Send input_buffer to compiler and executor via IPC
 
+        // testing pure execution
+        pure_exec((char *)input_buffer, buf_pose);
+
+        buf_pose = 0;
     }
 
     LOG("Exiting REPL loop...\n");
+    return;
+}
+
+void file_based_usage(void) {
+    // Still TODO
+    LOG("Starting file-based execution...\n");
+
+    // send filename to compiler via IPC
+    // receive bytecode from compiler via IPC
+    // send bytecode to executor via IPC
+    // receive output from executor via IPC
+    // format and print output
+
+    LOG("Exiting file-based execution...\n");
+    return;
+}
+
+void complile_only_usage(void) {
+    // Still TODO
+    LOG("Starting compile-only execution...\n");
+
+    return;
+}
+
+void execute_only_usage(void) {
+    // Still TODO
+    LOG("Starting execute-only execution...\n");
+
     return;
 }
 
@@ -400,66 +545,66 @@ umain(int argc, char **argv) {
             repl_ctx.output_format,
             repl_ctx.input_file ? repl_ctx.input_file : "NULL");
 
+    // if user wants to only execute precompiled bytecode
     if (repl_ctx.execute_only) {
 
         LOG("Following execute-only mode...\n");
 
         repl_ctx.executor_id = spawn_executor();
         if (repl_ctx.executor_id == 0) {
-            cleanup_resources();
-            exit();
+            err_exit();
         }
 
-        // TODO: future file processing and IPC communication
+        execute_only_usage();
     }
 
+    // if user wants to only compile Brainfuck source code
     if (repl_ctx.compile_only) {
 
         LOG("Following compile-only mode...\n");
 
         repl_ctx.compiler_id = spawn_compiler();
         if (repl_ctx.compiler_id == 0) {
-            cleanup_resources();
-            exit();
+            err_exit();
         }
 
-        // TODO: future file processing and IPC communication
+        complile_only_usage();
     }
 
+    // if user wants interactive REPL session
     if (repl_ctx.interactive) {
 
         LOG("Following interactive REPL mode...\n");
 
         repl_ctx.compiler_id = spawn_compiler();
         if (repl_ctx.compiler_id == 0) {
-            cleanup_resources();
-            exit();
+            err_exit();
         }
 
         repl_ctx.executor_id = spawn_executor();
         if (repl_ctx.executor_id == 0) {
-            cleanup_resources();
-            exit();
+            err_exit();
         }
 
         repl_loop();
     }
 
-    if (repl_ctx.input_file != NULL) {
+    // if user wants file-based execution
+    if (repl_ctx.input_file != NULL && !repl_ctx.compile_only && !repl_ctx.execute_only && !repl_ctx.interactive) {
     
         LOG("File-based execution mode is not implemented yet\n");
     
         repl_ctx.compiler_id = spawn_compiler();
         if (repl_ctx.compiler_id == 0) {
-            cleanup_resources();
-            exit(); 
+            err_exit(); 
         }
 
         repl_ctx.executor_id = spawn_executor();
         if (repl_ctx.executor_id == 0) {
-            cleanup_resources();
-            exit();
+            err_exit();
         }
+
+        file_based_usage();
     }
 
 

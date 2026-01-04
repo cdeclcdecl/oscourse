@@ -5,9 +5,13 @@
  * bf_compiler.c - Brainfuck JIT Compiler for JOS
  * 
  * CLI USAGE:
- *   bf_compiler <repl_id> [-Otime]               : Normal mode (waits for IPC)
- *   bf_compiler -t [-Otime]                      : Self-test mode (runs built-in tests)
- *   bf_compiler -c "<bf_code>" <executor_id>     : Compile single string and exit
+ *    bf_compiler [options]
+ *    --REPL                       : (Not shown in help message) REPL mode (waits for IPC)
+ *    -h (--help)                  : Show this help message\n"
+ *    -o (--output) <file>         : Specify output file for bytecode\n"
+ *    -Otime (--optimize-time)     : Enable time optimizations\n"
+ *    -d (--debug)                 : Enable debug mode\n"
+ *    <input_file>                 : Input file (optional)\n";
  * 
  * COMPONENTS:
  *   - BF syntax validator
@@ -24,55 +28,117 @@
 #include <inc/lib.h>
 #include <inc/bf.h>
 
-bf_compiler_context_t compiler_ctx;
-static bool g_test_mode;
-static bool g_compile_once;
-static const char *g_single_source;
+#define LOG(msg, ...) if (compiler_ctx.debug_mode) { cprintf("[COMPILER]: " msg, ##__VA_ARGS__); }
 
-static const char *usage_msg = "Usage: bf_compiler <repl_id> [-Otime] | -t [-Otime] | -c \"<bf_code>\" <repl_id>\n";
+bf_compiler_context_t compiler_ctx = {
+    .source = NULL,
+    .src_len = 0,
+    .code_buf = NULL,
+    .code_offset = 0,
+    .loop_depth = 0,
+    .repl_id = 0,
+    .debug_mode = false,
+    .REPL_mode = false,
+    .optimize_time = false,
+    .input_file = NULL,
+    .output_file = NULL,
+};
 
-// Forward declarations for helpers defined below
-static int parse_arguments(int argc, char **argv);
-static int compile_bf_to_x86(void);
-static int validate_syntax(void);
-static void optimize_instructions(void);
-static void send_to_repl(void);
+char usage_msg[] =
+    "Usage: bf_compiler [options]\n"
+    "  -h (--help)                  : Show this help message\n"
+    "  -o (--output) <file>         : Specify output file for bytecode\n"
+    "  -Otime (--optimize-time)     : Enable time optimizations\n"
+    "  -d (--debug)                 : Enable debug mode\n"
+    "  <input_file>                 : Input file (optional)\n";
 
 /*
  * CLI ARGUMENT PARSER
  * Parses flags and positional arguments into compiler_ctx and mode flags.
  */
-static int parse_arguments(int argc, char **argv) {
-    g_test_mode = false;
-    g_compile_once = false;
-    g_single_source = NULL;
-
-    if (argc < 2) return -1;
-
-    int i = 1;
-    if (strcmp(argv[i], "-t") == 0) {
-        g_test_mode = true;
-        i++;
-    } else if (strcmp(argv[i], "-c") == 0) {
-        g_compile_once = true;
-        if (i + 2 >= argc) return -1;
-        g_single_source = argv[i + 1];
-        compiler_ctx.repl_id = strtol(argv[i + 2], NULL, 0);
-        i += 3;
-    } else {
-        compiler_ctx.repl_id = strtol(argv[i], NULL, 0);
-        i++;
+int parse_arguments(int argc, char **argv) {
+    
+    // No arguments or just the program name
+    if (argc < 2) {
+        cprintf("%s", usage_msg);
+        return -1;
     }
-
-    for (; i < argc; i++) {
-        if (strcmp(argv[i], "-Otime") == 0 || strcmp(argv[i], "-O") == 0) {
+    
+    int i = 1;
+    while (i < argc) {
+        // Handle help flag first
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            cprintf("%s", usage_msg);
+            exit();
+        }
+        
+        // Handle REPL mode
+        else if (strcmp(argv[i], "--REPL") == 0) {
+            compiler_ctx.REPL_mode = true;
+            i++;
+        }
+        
+        // Handle debug mode
+        else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
+            compiler_ctx.debug_mode = true;
+            i++;
+        }
+        
+        // Handle time optimizations
+        else if (strcmp(argv[i], "-Otime") == 0 || strcmp(argv[i], "--optimize-time") == 0) {
             compiler_ctx.optimize_time = true;
-        } else {
+            i++;
+        }
+        
+        // Handle output file
+        else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            if (i + 1 >= argc) {
+                cprintf("Error: -o/--output requires a filename argument\n");
+                return -1;
+            }
+            compiler_ctx.output_file = argv[i + 1];
+            i += 2;
+        }
+        
+        // Handle positional argument (input file)
+        else if (argv[i][0] != '-') {
+            if (compiler_ctx.input_file != NULL) {
+                cprintf("Error: Only one input file can be specified\n");
+                return -1;
+            }
+            compiler_ctx.input_file = argv[i];
+            i++;
+        }
+        
+        // Handle unknown argument
+        else {
+            cprintf("Error: Unknown argument: %s\n", argv[i]);
+            cprintf("%s", usage_msg);
             return -1;
         }
     }
+    
+    // If no input file is specified and not in REPL mode, show error
+    if (!compiler_ctx.REPL_mode && compiler_ctx.input_file == NULL) {
+        cprintf("Error: Input file required\n");
+        return -1;
+    }
 
-    if (g_compile_once && !g_single_source) return -1;
+    if (!compiler_ctx.REPL_mode && compiler_ctx.output_file == NULL) {
+        compiler_ctx.output_file = "out.bc";
+    }
+    
+    // Debug output
+    if (compiler_ctx.debug_mode) {
+        cprintf("[COMPILER] Parsed arguments:\n");
+        cprintf("  REPL_mode = %d\n", compiler_ctx.REPL_mode);
+        cprintf("  debug_mode = %d\n", compiler_ctx.debug_mode);
+        cprintf("  optimize_time = %d\n", compiler_ctx.optimize_time);
+        cprintf("  input_file = %s\n", compiler_ctx.input_file ? compiler_ctx.input_file : "NULL");
+        cprintf("  output_file = %s\n", compiler_ctx.output_file ? compiler_ctx.output_file : "NULL");
+        cprintf("  repl_id = %d\n", compiler_ctx.repl_id);
+    }
+    
     return 0;
 }
 
@@ -86,8 +152,7 @@ static int validate_syntax(void) {
         char c = compiler_ctx.source[i];
         bool ok = false;
         switch (c) {
-            case '>': case '<': case '+': case '-': case '.': case ',':
-            case '[': case ']': case '{': case '}': case '*': case '/':
+            case '>': case '<': case '+': case '-': case '.': case ',': case '[': case ']':
                 ok = true;
                 break;
             default:
@@ -115,9 +180,9 @@ static int validate_syntax(void) {
  * Lightweight run-length collapse for >,<,+,- when -Otime is enabled.
  */
 static void optimize_instructions(void) {
-    static char optimized[MAX_BF_CODE_LEN];
+    static char optimized[MAX_BF_MSG_LEN];
     size_t w = 0;
-    for (size_t i = 0; i < compiler_ctx.src_len && w < MAX_BF_CODE_LEN - 1; ) {
+    for (size_t i = 0; i < compiler_ctx.src_len && w < MAX_BF_MSG_LEN - 1; ) {
         char c = compiler_ctx.source[i];
         if (!compiler_ctx.optimize_time || (c != '>' && c != '<' && c != '+' && c != '-')) {
             optimized[w++] = c;
@@ -127,7 +192,7 @@ static void optimize_instructions(void) {
 
         size_t run = 1;
         while (i + run < compiler_ctx.src_len && compiler_ctx.source[i + run] == c && run < 255) run++;
-        for (size_t k = 0; k < run && w < MAX_BF_CODE_LEN - 1; k++) optimized[w++] = c;
+        for (size_t k = 0; k < run && w < MAX_BF_MSG_LEN - 1; k++) optimized[w++] = c;
         i += run;
     }
     optimized[w] = '\0';
@@ -175,32 +240,10 @@ static void send_to_repl(void) {
 /*
  * MAIN ENTRY POINT
  * 
- * ARGUMENTS:
- *   argc - Argument count from JOS loader
- *   argv - Argument values:
- *          argv[0] = "bf_compiler"
- *          argv[1] = repl_id OR "-c"
- *          argv[2] = "-Otime" (optional) OR BF code string (if -c)
- * 
- * WORKFLOW:
- *   1. Parse command line arguments
- *   2. If test mode (-t): run built-in test suite and exit
- *   3. If compile mode (-c): compile single string and send to executor
- *   4. Else (normal mode):
- *        a. Allocate page for code generation
- *        b. Enter infinite IPC receive loop
- *        c. For each received BF code page:
- *             - Compile to x86
- *             - Send result to executor
- * 
- * TEST MODE BEHAVIOR:
- *   Runs internal test cases (valid/invalid BF code) and verifies:
- *   - Syntax validation works correctly
- *   - Optimizations produce expected code size reduction
- *   - Generated code doesn't exceed page boundaries
+ * main logic of the compiler process
+ *  
  */
 void umain(int argc, char **argv) {
-    memset(&compiler_ctx, 0, sizeof(compiler_ctx));
     if (parse_arguments(argc, argv) < 0) {
         cprintf("%s", usage_msg);
         return;
@@ -213,6 +256,11 @@ void umain(int argc, char **argv) {
     }
     compiler_ctx.code_buf = (uint8_t *)UTEMP;
 
+    return;
+
+    // Temporarily deactivated code below for simplification.
+
+    /*
     if (g_test_mode) {
         // Very small self-checks for syntax validator.
         const char *valid = "++[-->++]";
@@ -238,7 +286,6 @@ void umain(int argc, char **argv) {
         send_to_repl();
         return;
     }
-
     // Normal mode: wait for BF source pages and respond with compiled output.
     if (sys_alloc_region(0, (void *)(UTEMP + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
         cprintf("bf_compiler: failed to allocate receive buffer\n");
@@ -256,7 +303,7 @@ void umain(int argc, char **argv) {
         }
 
         bf_source_msg_t *msg = (bf_source_msg_t *)(UTEMP + PAGE_SIZE);
-        if (msg->magic != BF_MAGIC_SOURCE || msg->code_len >= MAX_BF_CODE_LEN) {
+        if (msg->magic != BF_MAGIC_SOURCE || msg->code_len >= MAX_BF_MSG_LEN) {
             cprintf("bf_compiler: invalid source message\n");
             continue;
         }
@@ -272,196 +319,5 @@ void umain(int argc, char **argv) {
         }
         send_to_repl();
     }
-}
-
-/*
- * COMPILE ENTRY POINT
- * 
- * PURPOSE:
- *   Central compilation workflow coordinator
- * 
- * STEPS:
- *   1. Validate BF syntax (validate_syntax)
- *   2. Apply optimizations if enabled (optimize_instructions)
- *   3. Generate x86 prologue (generate_prologue)
- *   4. Process each BF instruction (emit_instruction)
- *   5. Generate x86 epilogue (generate_epilogue)
- *   6. Verify code size limits
- * 
- * ERROR HANDLING:
- *   Returns negative error codes:
- *    -BF_ERR_SYNTAX: Invalid BF code
- *    -BF_ERR_OVERFLOW: Code exceeds page size
- * 
- * AUXILIARY FUNCTIONS USED:
- *   - validate_syntax()
- *   - optimize_instructions()
- *   - generate_prologue()
- *   - emit_instruction() for each BF command
- *   - generate_epilogue()
- */
-static int compile_bf_to_x86(void);
-
-/*
- * SYNTAX VALIDATOR
- * 
- * PURPOSE:
- *   Verify BF code has valid syntax before compilation
- * 
- * VALIDATION RULES:
- *   1. Only valid BF characters allowed (><+-.,[])
- *   2. All brackets must be properly nested
- *   3. No empty loops (future optimization check)
- * 
- * ALGORITHM:
- *   Use stack-based bracket matching:
- *    - Push position on '['
- *    - Pop on ']'
- *    - Error if stack underflow/overflow
- * 
- * RETURN VALUE:
- *   0 = valid syntax
- *   -BF_ERR_SYNTAX = invalid syntax
- */
-static int validate_syntax(void);
-
-/*
- * TIME OPTIMIZER
- * 
- * PURPOSE:
- *   Reduce runtime of generated code through pattern replacement
- *   Enabled by -Otime flag
- * 
- * OPTIMIZATION RULES:
- *   1. Sequential pointer moves:
- *        ">>>" -> add $3, %esi (3 bytes vs 9 bytes)
- *   2. Sequential value modifications:
- *        "++++" -> addb $4, (%esi) (3 bytes vs 12 bytes)
- *   3. Loop elimination:
- *        "[+]" -> movb $0, (%esi) when starting from non-zero
- *   4. Memory copy detection:
- *        "[->+<]" -> optimized block copy
- * 
- * IMPLEMENTATION APPROACH:
- *   Two-pass optimization:
- *    1. First pass: convert source to intermediate representation
- *    2. Second pass: apply pattern matching and replacement
- */
-static void optimize_instructions(void);
-
-/*
- * X86 PROLOGUE GENERATOR
- * 
- * PURPOSE:
- *   Emit setup code at start of generated function
- * 
- * GENERATED CODE:
- *   mov $BF_TAPE_ADDR, %esi   ; Setup tape pointer
- *   push %ebp                 ; Standard function prologue
- *   mov %esp, %ebp
- * 
- * REGISTER USAGE:
- *   %esi = current tape pointer (preserved across calls)
- *   %edi = tape base address (for future ASAN)
- *   %eax/%edx = scratch registers
- * 
- * RETURN:
- *   Number of bytes written to code buffer
- */
-size_t generate_prologue(void) {
-    // Stub: will be implemented after jit_interpreter.c
-    return 0;
-}
-
-/*
- * X86 EPILOGUE GENERATOR
- * 
- * PURPOSE:
- *   Emit cleanup code at end of generated function
- * 
- * GENERATED CODE:
- *   mov %ebp, %esp            ; Standard function epilogue
- *   pop %ebp
- *   ret                       ; Return to caller
- * 
- * SPECIAL CONSIDERATIONS:
- *   Must preserve all callee-saved registers per x86 ABI
- *   Must clean up any stack modifications
- * 
- * RETURN:
- *   Number of bytes written to code buffer
- */
-size_t generate_epilogue(void) {
-    // Stub: will be implemented after jit_interpreter.c
-    return 0;
-}
-
-/*
- * INSTRUCTION EMITTER
- * 
- * PURPOSE:
- *   Generate x86 code for single BF operation
- * 
- * BEHAVIOR BY OPCODE:
- *   '>' : add $1, %esi
- *   '<' : sub $1, %esi
- *   '+' : addb $1, (%esi)
- *   '-' : subb $1, (%esi)
- *   '.' : call sys_cputs with current cell
- *   ',' : call sys_cgetc, store result in current cell
- *   '[' : conditional jump to loop end if cell==0
- *   ']' : unconditional jump back to loop start
- * 
- * LOOP HANDLING:
- *   Uses handle_loop_start() and handle_loop_end() for bracket processing
- * 
- * RETURN:
- *   Number of bytes written to code buffer
- */
-size_t emit_instruction(char op) {
-    // Stub: will be implemented after jit_interpreter.c
-    (void)op;
-    return 0;
-}
-
-/*
- * LOOP START HANDLER
- * 
- * PURPOSE:
- *   Process '[' instruction in BF code
- * 
- * STEPS:
- *   1. Push current code position to loop stack
- *   2. Emit placeholder jump instruction:
- *        cmpb $0, (%esi)
- *        jz <placeholder>
- *   3. Leave space for 32-bit relative offset
- * 
- * ERROR HANDLING:
- *   Returns error if loop depth exceeds 256
- */
-void handle_loop_start(void) {
-    // Stub for future JIT; validation already handled in validate_syntax.
-    return;
-}
-
-/*
- * LOOP END HANDLER
- * 
- * PURPOSE:
- *   Process ']' instruction in BF code
- * 
- * STEPS:
- *   1. Pop matching loop start position from stack
- *   2. Emit back jump:
- *        cmpb $0, (%esi)
- *        jnz <loop_start>
- *   3. Backpatch forward jump from loop start
- * 
- * ERROR HANDLING:
- *   Returns error if unmatched closing bracket
- */
-void handle_loop_end(void) {
-    // Stub for future JIT; validation already handled in validate_syntax.
-    return;
+    */
 }
