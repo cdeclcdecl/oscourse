@@ -26,7 +26,6 @@
 /* Typedef the types that inc/mmu.h needs. */
 typedef uint32_t physaddr_t;
 typedef uint32_t off_t;
-typedef int bool;
 
 #include <inc/mmu.h>
 #include <inc/fs.h>
