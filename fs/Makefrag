@@ -14,7 +14,9 @@ FSIMGTXTFILES :=	fs/newmotd \
 			fs/script \
 			fs/testshell.key \
 			fs/testshell.sh \
-			fs/test.bf
+			fs/test.bf \
+			fs/test_bytecode.bin
+
 
 USERAPPS :=		$(OBJDIR)/user/init \
 			$(OBJDIR)/user/cat \

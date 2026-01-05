@@ -4,13 +4,12 @@
  * brainfuck.c - Brainfuck JIT REPL for JOS
  *
  * CLI USAGE:
- *    bf_jit_interpreter [options]
+ *    bf_jit_interpreter [options] <input_file>
+ *    <input_file>                 : Input file (optional)\n";
  *    --REPL                       : (Not shown in help message) REPL mode (waits for IPC)
  *    -h (--help)                  : Show this help message\n"
  *    -d (--debug)                 : Enable debug mode\n"
  *    -p (--print) ascii|hex|dec   : Set output format\n"
- *    <input_file>                 : Input file (optional)\n";
- *
  */
 
 #include <inc/lib.h>
@@ -71,7 +70,7 @@ void format_output(char sym) {
     }
 }
 
-
+// NOT USED! USE interpret_bf_bytecode INSTEAD!
 // for testing purposes
 // no syntax checks, optimizations, or IPC yet
 // just pure interpretation
@@ -135,6 +134,146 @@ void pure_exec(char *bf, size_t code_size) {
         }
         //cprintf("value: %u, char: %c, pos: %u\n", *ptr, *ptr, ptr - tape);
     }
+}
+
+
+/* 
+ * local bufer for tape is used in standalone mode
+ * when out of tape returns error and stops processing
+ * supports ^D while executing
+ * works fine with 8 base comands in brainfuck
+ * sensitive to endians
+ * no syntax check. raw execute from bin file (located in fs). uses executor_ctx
+ * optimitzed opcodes in future
+ */
+
+
+void interpret_bf_bytecode() {
+    // using global context
+    uint8_t *tape = executor_ctx.tape;
+    if (tape == NULL) {
+        cprintf("Error: BF tape is not allocated.\n");
+        return;
+    }
+
+    uint8_t *ptr = tape + (BF_TAPE_SIZE / 2);
+
+    // num of instr in buffer
+    size_t num_instructions = executor_ctx.code_size / sizeof(Instruction);
+    Instruction *program = (Instruction *)executor_ctx.code_buf;
+
+    // instruction pointer
+    size_t ip = 0;
+
+    // main cycle of execution
+    LOG("interpret_bf_bytecode: starting execution of %zu instructions\n", num_instructions);
+
+    while (ip < num_instructions) {
+        Instruction inst = program[ip];
+        LOG("interpret_bf_bytecode: executing instruction %zu: opcode=%d, arg=%d\n", ip, inst.opcode, inst.arg);
+
+        switch (inst.opcode) {
+            case OP_NOP:
+                LOG("interpret_bf_bytecode: NOP\n");
+                ip++;
+                break;
+
+            case OP_INC_PTR:
+                LOG("interpret_bf_bytecode: INC_PTR by %d\n", inst.arg);
+                LOG("interpret_bf_bytecode: ptr before INC_PTR: %p\n", ptr);
+                if (ptr + inst.arg >= tape + BF_TAPE_SIZE) {
+                    cprintf("interpret_bf_bytecode::[ERROR] Pointer out of bounds (right)\n");
+                    return;
+                }
+                if (ptr + inst.arg < tape) {
+                    cprintf("interpret_bf_bytecode::[ERROR] Pointer out of bounds (left)\n");
+                    return;
+                }
+                ptr += inst.arg;
+                LOG("interpret_bf_bytecode: ptr after INC_PTR: %p\n", ptr);
+                ip++;
+                break;
+
+            case OP_DEC_PTR:
+                LOG("interpret_bf_bytecode: DEC_PTR by %d\n", inst.arg);
+                if (ptr - inst.arg < tape) {
+                    cprintf("Error: Pointer out of bounds (left)\n");
+                    return;
+                }
+                if (ptr - inst.arg >= tape + BF_TAPE_SIZE) {
+                    cprintf("Error: Pointer out of bounds (right)\n");
+                    return;
+                }
+                ptr -= inst.arg;
+                ip++;
+                break;        
+
+            case OP_INC_CELL:
+                LOG("interpret_bf_bytecode: INC_CELL by %d (before: %d)\n", inst.arg, *ptr);
+                *ptr += inst.arg;
+                LOG("interpret_bf_bytecode: INC_CELL after: %d\n", *ptr);
+                ip++;
+                LOG("interpret_bf_bytecode: ip incremented to %zu\n", ip);
+                break;
+
+            case OP_DEC_CELL:
+                LOG("interpret_bf_bytecode: DEC_CELL by %d (before: %d)\n", inst.arg, *ptr);
+                *ptr -= inst.arg;
+                LOG("interpret_bf_bytecode: DEC_CELL after: %d\n", *ptr);
+                ip++;
+                break;
+
+            case OP_OUTPUT:
+                LOG("interpret_bf_bytecode: OUTPUT, *ptr = %d\n", *ptr);
+                format_output(*ptr);
+                LOG("interpret_bf_bytecode: format_output called\n");
+                ip++;
+                break;
+
+            case OP_INPUT:
+                LOG("interpret_bf_bytecode: INPUT\n");
+                {
+                    int c = getchar();
+                    if ((c & 0xff) == 0xf4) { // ^D
+                        cprintf("^D\n");
+                        return;
+                    }
+                    *ptr = (uint8_t) c;
+                     cputchar(c); // for echo
+               }
+                ip++;
+                break;
+
+            case OP_LOOP_START:
+                LOG("interpret_bf_bytecode: LOOP_START\n");
+                if (*ptr == 0) {
+                    // skip cycle body
+                    ip = inst.arg;
+                    LOG("interpret_bf_bytecode: skipping loop\n");
+                } else {
+                    ip++;
+                }
+                break;
+
+            case OP_LOOP_END:
+                LOG("interpret_bf_bytecode: LOOP_END\n");
+                if (*ptr != 0) {
+                    // go to start of cycle
+                    ip = inst.arg;
+                    LOG("interpret_bf_bytecode: jumping back to loop start\n");
+                } else {
+                    ip++;
+                }
+                break;
+
+            // --- optimized opcodes will be here ---
+
+            default:
+                cprintf("Unknown opcode: %d at ip: %zu\n", inst.opcode, ip);
+                return;
+        }
+    }
+    LOG("interpret_bf_bytecode: execution finished\n");
 }
 
 
@@ -222,9 +361,9 @@ void umain(int argc, char **argv) {
         return;
     }
     */
-    executor_ctx.tape = (uint8_t *) BF_TAPE_ADDR;
+    //executor_ctx.tape = (uint8_t *) BF_TAPE_ADDR;
 
-    LOG("Allocated BF tape at %p\n", executor_ctx.tape);
+    //LOG("Allocated BF tape at %p\n", executor_ctx.tape);
 
     if (executor_ctx.REPL_mode) {
         LOG("Entering REPL mode...\n");
@@ -251,9 +390,10 @@ void umain(int argc, char **argv) {
             LOG("Received IPC message from REPL %08x, size %zu bytes\n",
                 val, executor_ctx.code_size);
 
-            LOG("Executing JIT-compiled code...\n");
-            pure_exec((char *)executor_ctx.code_buf, executor_ctx.code_size);
-            
+            //LOG("Executing JIT-compiled code...\n");
+            //pure_exec((char *)executor_ctx.code_buf, executor_ctx.code_size);
+            LOG("Executing JIT-compiled code (interpret_bf_bytecode)...\n");
+            interpret_bf_bytecode();
             LOG("JIT-compiled code execution complete\n");
 
             LOG("Sending execution completion signal back to REPL\n");
@@ -261,5 +401,39 @@ void umain(int argc, char **argv) {
             LOG("Sent execution completion signal back to REPL\n");
 
         }
+    } else { // standalone version. avoiding repl, ipc, compilers
+        // using local bufer for tape!
+        static uint8_t local_tape[BF_TAPE_SIZE];
+        executor_ctx.tape = local_tape;
+
+        LOG("Using local tape at %p\n", executor_ctx.tape);
+      
+        uint8_t local_code_buf[PAGE_SIZE];
+
+        cprintf("[INTERPRETER] USING STANDALONE VERSION.\n");
+        int fd = open(executor_ctx.input_file, O_RDONLY);
+        if (fd < 0) {
+            cprintf("Error: Cannot open file %s\n", executor_ctx.input_file);
+            return;
+        }
+
+        // read bytecode to buffer
+        ssize_t bytes_read = read(fd, local_code_buf, PAGE_SIZE);
+        if (bytes_read < 0) {
+            cprintf("Error: Cannot read from file %s\n", executor_ctx.input_file);
+            close(fd);
+            return;
+        }
+
+        close(fd);
+
+        executor_ctx.code_buf = local_code_buf;
+        executor_ctx.code_size = bytes_read;
+
+        LOG("Loaded bytecode from file, size: %zu bytes\n", executor_ctx.code_size);
+
+        interpret_bf_bytecode();
+
+        LOG("[INTERPRETER] Execution COMPLETE.\n");
     }
 }
