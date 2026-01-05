@@ -21,10 +21,10 @@
  * System constants
  */
 #define BF_TAPE_SIZE    30000           // Standard Brainfuck tape size (30KB)
-#define BF_TAPE_ADDR    0x500000        // Fixed address for BF tape in user space
 #define REPL_TEMP_ADDR ((char *)0xa00000)    // Address for temporarily mappings
 #define COMPILER_TEMP_ADDR ((char *) 0xb00000)
 #define EXECUTOR_TEMP_ADDR ((char *) 0xc00000)
+#define BF_TAPE_ADDR    ((char *) 0xd00000)        // Fixed address for BF tape in user space
 #define MAX_BF_MSG_LEN (PAGE_SIZE)  // Max BF message size per IPC message
 
 /*
@@ -54,7 +54,6 @@ enum {
     BF_ERR_SYNTAX = -1,     // Invalid BF syntax (unmatched brackets)
     BF_ERR_OVERFLOW = -2,   // Code size exceeds page limit
     BF_ERR_EXECUTION = -3,  // Runtime error during execution
-    BF_ERR_INVALID_MSG = -4 // Invalid IPC message format
 };
 
 /*
@@ -144,20 +143,22 @@ typedef struct {
  *
  * Fields:
  *   tape - Pointer to BF memory tape (30KB at BF_TAPE_ADDR)
- *   output_buf - Buffer for capturing program output
- *   output_pos - Current write position in output buffer
+ *   code_buf - Buffer holding JIT-compiled bytecode
+ *   code_size - Size of bytecode in bytes
  *   output_format - Output format (BF_OUTPUT_ASCII/HEX/DEC)
- *   code_entry - Entry point of compiled code after W->X transition
- *   test_mode - Flag for self-test execution (bypasses IPC)
- *   single_exec - Flag for single execution mode (-e option)
+ *   debug_mode - Flag for enabling debug logging (-d)
+ *   REPL_mode - Flag indicating if running in REPL mode
+ *   input_file - Optional input file name for bytecode
  */
 typedef struct {
     uint8_t *tape;
-    char output_buf[PAGE_SIZE];
-    size_t output_pos;
+    uint8_t *code_buf;
+    size_t code_size;
 
     int output_format;
-    void (*code_entry)(uint8_t *); // Function pointer type for generated code
+    bool debug_mode;
+    bool REPL_mode;
 
-    bool single_exec;
+    envid_t repl_id;
+    const char *input_file;
 } bf_executor_ctx_t;

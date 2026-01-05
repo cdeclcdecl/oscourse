@@ -13,7 +13,8 @@ FSIMGTXTFILES :=	fs/newmotd \
 			fs/lorem \
 			fs/script \
 			fs/testshell.key \
-			fs/testshell.sh
+			fs/testshell.sh \
+			fs/test.bf
 
 USERAPPS :=		$(OBJDIR)/user/init \
 			$(OBJDIR)/user/cat \

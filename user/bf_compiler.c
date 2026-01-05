@@ -235,12 +235,14 @@ static void send_to_repl(void) {
  */
 void umain(int argc, char **argv) {
 
-    LOG("bf_compiler starting up...\n");
 
     if (parse_arguments(argc, argv) < 0) {
         cprintf("%s", usage_msg);
         return;
     }
+
+    LOG("bf_compiler parsed arguments\n");
+
 
     // Allocate a scratch page for generated output.
     if (sys_alloc_region(0, (void *)COMPILER_TEMP_ADDR, PAGE_SIZE, PROT_RW) < 0) {

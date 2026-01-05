@@ -56,71 +56,6 @@ char repl_help_msg[] =
     "    !quit                  Exit the REPL\n";
 
 
-// for testing purposes
-// no syntax checks, optimizations, or IPC yet
-// just pure interpretation
-void pure_exec(char *bf, size_t code_size) {
-    LOG("Executing bytecode of size %zu\n", code_size);
-    uint8_t tape[BF_TAPE_SIZE] = {0};
-    uint8_t *ptr = tape;// start in middle
-    int nest = 1;
-    for (int i = 0; i < code_size; i++) {
-        switch (bf[i]) {
-            case '>':
-                ptr++;
-                if (ptr >= tape + BF_TAPE_SIZE) {
-                    ptr = tape;
-                }
-                break;
-            case '<':
-                ptr--;
-                if (ptr < tape) {
-                    ptr = tape + BF_TAPE_SIZE - 1;
-                }
-                break;
-            case '+':
-                *ptr += 1;
-                break;
-            case '-':
-                *ptr -= 1;
-                break;
-            case '.':
-                cputchar(*ptr);
-                break;
-            case ',':
-                nest = getchar();
-                if ((nest & 0xff) == 0xf4) {
-                    cprintf("^D\n");
-                    return;
-                }
-                *ptr = (uint8_t) nest;
-                cputchar(nest);
-                break;
-            case '[':
-                if (*ptr == 0) {
-                    nest = 1;
-                    while (++i < code_size && nest > 0) {
-                        if (bf[i] == '[') nest++;
-                        else if (bf[i] == ']') nest--;
-                    }
-                } 
-                break;
-            case ']':
-                if (*ptr != 0) {
-                    nest = 1;
-                    while (nest > 0 && --i >= 0) {
-                        if (bf[i] == ']') nest++;
-                        else if (bf[i] == '[') nest--;
-                    }
-                }
-                break;
-            default:
-                break;
-        }
-        //cprintf("value: %u, char: %c, pos: %u\n", *ptr, *ptr, ptr - tape);
-    }
-}
-
  /*
  * RESOURCE CLEANUP
  *
@@ -171,58 +106,10 @@ void err_exit(void) {
 }
 
 /*
- * OUTPUT FORMATTER
- *
- * FORMATTING RULES:
- *   ASCII: Direct character output (non-printables as '.')
- *   HEX: Space-separated hex bytes (e.g., "48 65 6c 6c 6f")
- *   DEC: Space-separated decimal values (e.g., "72 101 108 108 111")
- *
- */
-void format_output(const char *raw_output, size_t len) {
-    LOG("Formatting output in mode %d\n", repl_ctx.output_format);
-
-    switch (repl_ctx.output_format) {
-        case BF_OUTPUT_ASCII:
-            for (size_t i = 0; i < len; i++) {
-                char c = raw_output[i];
-                if (c >= 32 && c <= 126) {
-                    cputchar(c);
-                } else {
-                    cputchar('.'); // Non-printable as '.'
-                }
-            }
-            cputchar('\n');
-            break;
-
-        case BF_OUTPUT_HEX:
-            for (size_t i = 0; i < len; i++) {
-                cprintf("%02x ", (unsigned char)raw_output[i]);
-            }
-            cputchar('\n');
-            break;
-
-        case BF_OUTPUT_DEC:
-            for (size_t i = 0; i < len; i++) {
-                cprintf("%u ", (unsigned char)raw_output[i]);
-            }
-            cputchar('\n');
-            break;
-
-        default:
-            cprintf("Error: Unknown output format %d\n", repl_ctx.output_format);
-            break;
-    }
-
-    LOG("Output formatting complete\n");
-
-}
-
-/*
  * CLI ARGUMENT PARSER
  *
  * GRAMMAR:
- *   brainfuck [-bc] [-e] [-O] [-p <fmt>] [-h] [<file> (optional)]
+ *   brainfuck [-bc <output_file> (optional - default: out.bc)] [-e] [-Otime] [-p <fmt>] [-h] [<file> (optional)]
  *
  * RETURN:
  *   0 = success
@@ -240,7 +127,7 @@ int parse_repl_arguments(int argc, char **argv) {
         } else if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--exec") == 0) {
             // processing e flag
             repl_ctx.execute_only = true;
-        } else if (strcmp(argv[i], "-O") == 0 || strcmp(argv[i], "--optimize") == 0) {
+        } else if (strcmp(argv[i], "-Otime") == 0 || strcmp(argv[i], "--optimize") == 0) {
             // processing Otime flag
             repl_ctx.optimize_time = true;
         } else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--print") == 0) {
@@ -338,10 +225,9 @@ int parse_repl_arguments(int argc, char **argv) {
  * 
  */
 envid_t spawn_compiler(void) {
-    // Still TODO : cli arguments are not processed yet
 
     size_t cur = 2;
-    char *argv[4] = {BF_COMPILER_FILE, "--REPL", NULL, NULL};
+    char *argv[5] = {BF_COMPILER_FILE, "--REPL", NULL, NULL, NULL};
     envid_t compiler_id;
 
     if (repl_ctx.optimize_time) {
@@ -367,8 +253,30 @@ envid_t spawn_compiler(void) {
 envid_t spawn_executor(void) {
     // Still TODO : cli arguments are not processed yet
     
-    char *argv[4] = {BF_EXECUTOR_FILE, NULL, NULL, NULL};
+    size_t cur = 2;
+    char *argv[6] = {BF_EXECUTOR_FILE, "--REPL", NULL, NULL, NULL, NULL};
     envid_t executor_id;
+
+    if (repl_ctx.debug_mode) {
+        argv[cur++] = "-d";
+    }
+
+    switch (repl_ctx.output_format) {
+        case BF_OUTPUT_ASCII:
+            argv[cur++] = "--print";
+            argv[cur++] = "ascii";
+            break;
+        case BF_OUTPUT_HEX:
+            argv[cur++] = "--print";
+            argv[cur++] = "hex";
+            break;
+        case BF_OUTPUT_DEC:
+            argv[cur++] = "--print";
+            argv[cur++] = "dec";
+            break;
+        default:
+            break;
+    }
 
     LOG("Spawning executor process...\n");
 
@@ -397,6 +305,7 @@ void send_to_compiler(void) {
  *
  */
 void send_to_executor(void) {
+    LOG("Sending to executor %lu bytes\n", repl_ctx.send_ipc_size);
     ipc_send(repl_ctx.executor_id, 0, repl_ctx.send_ipc_buf, repl_ctx.send_ipc_size, PROT_RW);
 }
 
@@ -521,10 +430,17 @@ repl_loop(void) {
         /* Send only the meaningful bytes (no message headers) */
         send_to_compiler();
 
-        ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &buf_pose, &perm);
-        LOG("Received message from compiler, ")
-        /* testing pure execution on received data */
-        pure_exec((char *)repl_ctx.receive_ipc_buf, buf_pose);
+        ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
+        LOG("Received message from compiler, ");
+
+        LOG("Compiled bytecode size: %zu bytes\n", repl_ctx.receive_ipc_size);
+        // send to executor
+
+        memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
+        send_to_executor();
+        LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
+        ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+        LOG("Received execution completion from executor\n");
 
         buf_pose = 0;
     }
@@ -534,29 +450,110 @@ repl_loop(void) {
 }
 
 void file_based_usage(void) {
-    // Still TODO
     LOG("Starting file-based execution...\n");
 
-    // send filename to compiler via IPC
-    // receive bytecode from compiler via IPC
-    // send bytecode to executor via IPC
-    // receive output from executor via IPC
-    // format and print output
+    repl_ctx.fd = open(repl_ctx.input_file, 'r');
+    if (repl_ctx.fd < 0) {
+        cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
+        err_exit();
+    }
+    LOG("Opened input file descriptor %d\n", repl_ctx.fd);
+
+    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    if (n < 0) {
+        cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
+        err_exit();
+    }
+
+    repl_ctx.send_ipc_size = n;
+    LOG("Read %d bytes from input file\n", n);
+
+    send_to_compiler();
+    int perm = 0;
+    ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.send_ipc_size);
+
+    memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.send_ipc_size);
+    send_to_executor();
+    LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
+    ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+    LOG("Received execution completion from executor\n");
 
     LOG("Exiting file-based execution...\n");
     return;
 }
 
 void complile_only_usage(void) {
-    // Still TODO
     LOG("Starting compile-only execution...\n");
+    LOG("Input file: %s\n", repl_ctx.input_file);
+    repl_ctx.fd = open(repl_ctx.input_file, 'r');
+    if (repl_ctx.fd < 0) {
+        cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
+        err_exit();
+    }
+    LOG("Opened input file descriptor %d\n", repl_ctx.fd);
 
+     // send filename to compiler via IPC
+    
+    LOG("Reading Brainfuck source from file %s...\n", repl_ctx.input_file);
+    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    if (n < 0) {
+        cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
+        err_exit();
+    }
+    
+    repl_ctx.send_ipc_size = n;
+    LOG("Read %d bytes from input file\n", n);
+
+    send_to_compiler();
+
+    int perm = 0;
+    ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.send_ipc_size);
+
+    // write bytecode to output file
+    int fd_out = open(repl_ctx.output_file, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd_out < 0) {
+        cprintf("Error: Failed to open output file %s\n", repl_ctx.output_file);
+        err_exit();
+    }
+    LOG("Opened output file descriptor %d\n", fd_out);
+
+    ssize_t written = write(fd_out, repl_ctx.receive_ipc_buf, repl_ctx.send_ipc_size);
+    if (written < 0 || (size_t)written != repl_ctx.send_ipc_size) {
+        cprintf("Error: Failed to write bytecode to output file %s\n", repl_ctx.output_file);
+        close(fd_out);
+        err_exit();
+    }
+    LOG("Wrote %zu bytes of bytecode to output file %s\n", repl_ctx.send_ipc_size, repl_ctx.output_file);
+
+    close(fd_out);
+    LOG("Closed output file descriptor\n");
     return;
 }
 
 void execute_only_usage(void) {
-    // Still TODO
     LOG("Starting execute-only execution...\n");
+
+    repl_ctx.fd = open(repl_ctx.input_file, 'r');
+    if (repl_ctx.fd < 0) {
+        cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
+        err_exit();
+    }
+    LOG("Opened input file descriptor %d\n", repl_ctx.fd);
+
+    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    if (n < 0) {
+        cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
+        err_exit();
+    }
+
+    repl_ctx.send_ipc_size = n;
+    LOG("Read %d bytes from input file\n", n);
+    send_to_executor();
+    int perm = 0;
+    ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+    LOG("Received execution completion from executor\n");
 
     return;
 }
@@ -587,6 +584,23 @@ umain(int argc, char **argv) {
             repl_ctx.output_format,
             repl_ctx.input_file ? repl_ctx.input_file : "NULL");
 
+    // Allocate IPC buffers
+    res = sys_alloc_region(0, (void *)REPL_TEMP_ADDR, PAGE_SIZE, PROT_RW);
+    if (res < 0) {
+        cprintf("Error: Failed to allocate IPC buffer for compiler\n");
+        err_exit();
+    }
+
+    repl_ctx.send_ipc_buf = (void *)REPL_TEMP_ADDR;
+
+    res = sys_alloc_region(0, (void *)(REPL_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW);
+    if (res < 0) {
+        cprintf("Error: Failed to allocate IPC buffer for executor\n");
+        err_exit();
+    }
+
+    repl_ctx.receive_ipc_buf = (void *) (REPL_TEMP_ADDR + PAGE_SIZE);
+
     // if user wants to only execute precompiled bytecode
     if (repl_ctx.execute_only) {
 
@@ -612,22 +626,6 @@ umain(int argc, char **argv) {
 
         complile_only_usage();
     }
-
-    res = sys_alloc_region(0, (void *)REPL_TEMP_ADDR, PAGE_SIZE, PROT_RW);
-    if (res < 0) {
-        cprintf("Error: Failed to allocate IPC buffer for compiler\n");
-        err_exit();
-    }
-
-    repl_ctx.send_ipc_buf = (void *)REPL_TEMP_ADDR;
-
-    res = sys_alloc_region(0, (void *)(REPL_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW);
-    if (res < 0) {
-        cprintf("Error: Failed to allocate IPC buffer for executor\n");
-        err_exit();
-    }
-
-    repl_ctx.receive_ipc_buf = (void *) (REPL_TEMP_ADDR + PAGE_SIZE);
 
     // if user wants interactive REPL session
     if (repl_ctx.interactive) {
