@@ -162,3 +162,52 @@ typedef struct {
     envid_t repl_id;
     const char *input_file;
 } bf_executor_ctx_t;
+
+
+/*
+ * Responcible: deadlamer
+ * OPCODES for brainfuck
+ * Supports JIT. Supports optimized 
+ * opcodes (in future). Easy for debugging and testing. (alignment??)
+ * 
+ */
+typedef struct {
+    uint8_t opcode;
+    int32_t arg;
+} Instruction;
+
+typedef enum {
+    // OPCODES for base commands Brainfuck
+    OP_NOP = 0,        // No operation (useful for alignment or JIT)
+    OP_INC_PTR,        // > : increase data pointer 
+    OP_DEC_PTR,        // < : decrease data pointer
+    OP_INC_CELL,       // + : increase value of current cell
+    OP_DEC_CELL,       // - : decrease value of current cell
+    OP_OUTPUT,         // . : show value of current cell (arg not used)
+    OP_INPUT,          // , : put value to current cell (arg not used)
+    OP_LOOP_START,     // [ : start cycle (next step if cell == 0)
+    OP_LOOP_END,       // ] : end cycle (next step if cell != 0)
+
+    // --- Plug for number of base OPCODES ---
+    OP_COUNT           // label for counting
+} Opcode;
+
+
+/* 
+ * example of simple bf program using opcodes:
+ * 
+ * |CODE_STARTS HERE|>++++++++++[<->+].|CODE_ENDS_HERE|
+ * 
+ * Instruction program[] = {
+ *   {OP_INC_PTR, 1},      // >
+ *   {OP_INC_CELL, 10},    // ++++++++
+ *   {OP_LOOP_START, 8},   // [ -> jump to ] if 0
+ *   {OP_DEC_PTR, 1},      // <
+ *   {OP_DEC_CELL, 1},     // -
+ *   {OP_INC_PTR, 1},      // >
+ *   {OP_INC_CELL, 1},     // +
+ *   {OP_LOOP_END, 2},     // ] -> jump to [ if not 0
+ *   {OP_OUTPUT, 0},       // .
+ *   {OP_NOP, 0}
+ * };
+ */
