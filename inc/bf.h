@@ -188,9 +188,23 @@ typedef enum {
     OP_LOOP_START,     // [ : start cycle (next step if cell == 0)
     OP_LOOP_END,       // ] : end cycle (next step if cell != 0)
 
+    // Optimized opcodes
+    OP_CLEAR,          // [-] or [+] : set current cell to 0
+    OP_SEEK_RIGHT,     // [>] : move pointer right until current cell becomes 0
+    OP_SEEK_LEFT,      // [<] : move pointer left until current cell becomes 0
+    OP_MOVE_ADD,       // [->(+/-k)<] : move current cell value to offset cell, then clear current
+
     // --- Plug for number of base OPCODES ---
     OP_COUNT           // label for counting
 } Opcode;
+
+// OP_MOVE_ADD packing helpers
+// arg packs two signed 16-bit values:
+//   low 16 bits  = offset (relative cell index)
+//   high 16 bits = delta per unit (e.g., +1 for [->+<], -1 for [->-<], +2 for [->++<])
+#define BF_PACK_MOVE_ADD(offset, delta) ((int32_t)((((uint32_t)((uint16_t)(offset))) & 0xFFFFu) | (((uint32_t)((uint16_t)(delta))) << 16)))
+#define BF_UNPACK_MOVE_ADD_OFFSET(arg) ((int16_t)((uint32_t)(arg) & 0xFFFFu))
+#define BF_UNPACK_MOVE_ADD_DELTA(arg)  ((int16_t)(((uint32_t)(arg) >> 16) & 0xFFFFu))
 
 
 /* 
