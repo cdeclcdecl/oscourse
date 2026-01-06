@@ -178,7 +178,6 @@ static int validate_syntax(void) {
 }
 
 /*
-/*
  * Emit one instruction with bounds checking
  */
 static int emit_instruction(Instruction *program, size_t max_instr, size_t *count, Opcode op, int32_t arg) {
@@ -187,6 +186,119 @@ static int emit_instruction(Instruction *program, size_t max_instr, size_t *coun
     program[*count].arg = arg;
     (*count)++;
     return 0;
+}
+
+// Parse helpers for pattern-based optimizations (whitespace-tolerant)
+static size_t skip_spaces(const char *s, size_t len, size_t i) {
+    while (i < len && is_space(s[i])) i++;
+    return i;
+}
+
+static bool parse_run(const char *s, size_t len, size_t *i, char a, char b, int *delta_out) {
+    // Parses a run consisting of characters a/b and whitespace.
+    // For '><' : a='>', b='<' => delta is (#a - #b)
+    // For '+-' : a='+', b='-' => delta is (#a - #b)
+    size_t p = *i;
+    p = skip_spaces(s, len, p);
+    int delta = 0;
+    bool any = false;
+    while (p < len) {
+        char c = s[p];
+        if (c == a) { delta++; any = true; p++; }
+        else if (c == b) { delta--; any = true; p++; }
+        else if (is_space(c)) { p++; }
+        else break;
+    }
+    if (!any) return false;
+    *i = p;
+    *delta_out = delta;
+    return true;
+}
+
+static bool try_opt_clear(const char *s, size_t len, size_t *i) {
+    // Matches: [ - ] or [ + ] with optional whitespace
+    size_t p = *i;
+    if (p >= len || s[p] != '[') return false;
+    p++;
+    p = skip_spaces(s, len, p);
+    if (p >= len) return false;
+    char op = s[p];
+    if (op != '-' && op != '+') return false;
+    p++;
+    p = skip_spaces(s, len, p);
+    if (p >= len || s[p] != ']') return false;
+    p++;
+    *i = p;
+    return true;
+}
+
+static bool try_opt_seek(const char *s, size_t len, size_t *i, bool *right) {
+    // Matches: [>...] or [<...] where body is a non-empty run of only one direction, whitespace allowed
+    size_t p = *i;
+    if (p >= len || s[p] != '[') return false;
+    p++;
+    p = skip_spaces(s, len, p);
+    if (p >= len) return false;
+    char dir = s[p];
+    if (dir != '>' && dir != '<') return false;
+
+    bool any = false;
+    while (p < len) {
+        char c = s[p];
+        if (c == dir) { any = true; p++; }
+        else if (is_space(c)) { p++; }
+        else break;
+    }
+    if (!any) return false;
+    p = skip_spaces(s, len, p);
+    if (p >= len || s[p] != ']') return false;
+    p++;
+    *right = (dir == '>');
+    *i = p;
+    return true;
+}
+
+static bool try_opt_move_add(const char *s, size_t len, size_t *i, int16_t *off, int16_t *delta) {
+    // Matches common move loops:
+    //   [ -  (move to dst)  (+/- repeated)  (move back) ]
+    // Examples: [->+<], [->-<], [->++<], [->>+<<]
+    // Strict requirements:
+    //   - source delta must be exactly -1 (to preserve termination in uint8 tape)
+    //   - then move to a non-zero offset
+    //   - then apply non-zero delta at destination
+    //   - then move back to origin
+    size_t p = *i;
+    if (p >= len || s[p] != '[') return false;
+    p++;
+
+    p = skip_spaces(s, len, p);
+    int src_delta = 0;
+    if (!parse_run(s, len, &p, '+', '-', &src_delta)) return false;
+    if (src_delta != -1) return false;
+
+    int move_delta = 0;
+    if (!parse_run(s, len, &p, '>', '<', &move_delta)) return false;
+    if (move_delta == 0) return false;
+
+    int cell_delta = 0;
+    if (!parse_run(s, len, &p, '+', '-', &cell_delta)) return false;
+    if (cell_delta == 0) return false;
+
+    int back_delta = 0;
+    if (!parse_run(s, len, &p, '>', '<', &back_delta)) return false;
+    if (move_delta + back_delta != 0) return false;
+
+    p = skip_spaces(s, len, p);
+    if (p >= len || s[p] != ']') return false;
+    p++;
+
+    if (move_delta < -32768 || move_delta > 32767) return false;
+    if (cell_delta < -32768 || cell_delta > 32767) return false;
+
+    *off = (int16_t) move_delta;
+    *delta = (int16_t) cell_delta;
+    *i = p;
+    return true;
 }
 
 /*
@@ -205,10 +317,47 @@ static int compile_bf_to_x86(void) {
     size_t instr_count = 0;
     compiler_ctx.loop_depth = 0; // reuse loop_stack for instruction indices
 
+    if (compiler_ctx.optimize_time) {
+        LOG("Compile: -Otime enabled\n");
+    }
+
     for (size_t i = 0; i < compiler_ctx.src_len; ) {
         char c = compiler_ctx.source[i];
 
         if (is_space(c)) { i++; continue; }
+
+        // Optional loop-level optimizations (enabled by -Otime)
+        if (compiler_ctx.optimize_time && c == '[') {
+            size_t save = i;
+            bool right = false;
+            int16_t off = 0;
+            int16_t delta = 0;
+
+            if (try_opt_clear(compiler_ctx.source, compiler_ctx.src_len, &i)) {
+                res = emit_instruction(program, max_instr, &instr_count, OP_CLEAR, 0);
+                LOG("Emit: CLEAR instr=%zu\n", instr_count - 1);
+                if (res < 0) return res;
+                continue;
+            }
+
+            i = save;
+            if (try_opt_seek(compiler_ctx.source, compiler_ctx.src_len, &i, &right)) {
+                res = emit_instruction(program, max_instr, &instr_count, right ? OP_SEEK_RIGHT : OP_SEEK_LEFT, 0);
+                LOG("Emit: SEEK_%s instr=%zu\n", right ? "RIGHT" : "LEFT", instr_count - 1);
+                if (res < 0) return res;
+                continue;
+            }
+
+            i = save;
+            if (try_opt_move_add(compiler_ctx.source, compiler_ctx.src_len, &i, &off, &delta)) {
+                res = emit_instruction(program, max_instr, &instr_count, OP_MOVE_ADD, BF_PACK_MOVE_ADD(off, delta));
+                LOG("Emit: MOVE_ADD instr=%zu off=%d delta=%d\n", instr_count - 1, off, delta);
+                if (res < 0) return res;
+                continue;
+            }
+
+            i = save;
+        }
 
         // aggregate pointer shifts
         if (c == '>' || c == '<') {

@@ -266,6 +266,57 @@ void interpret_bf_bytecode() {
                 }
                 break;
 
+            case OP_CLEAR:
+                LOG("interpret_bf_bytecode: CLEAR (before: %d)\n", *ptr);
+                *ptr = 0;
+                ip++;
+                break;
+
+            case OP_SEEK_RIGHT:
+                LOG("interpret_bf_bytecode: SEEK_RIGHT\n");
+                while (*ptr != 0) {
+                    if (ptr + 1 >= tape + BF_TAPE_SIZE) {
+                        cprintf("Error: Pointer out of bounds (right)\n");
+                        return;
+                    }
+                    ptr++;
+                }
+                ip++;
+                break;
+
+            case OP_SEEK_LEFT:
+                LOG("interpret_bf_bytecode: SEEK_LEFT\n");
+                while (*ptr != 0) {
+                    if (ptr <= tape) {
+                        cprintf("Error: Pointer out of bounds (left)\n");
+                        return;
+                    }
+                    ptr--;
+                }
+                ip++;
+                break;
+
+            case OP_MOVE_ADD: {
+                int16_t off = BF_UNPACK_MOVE_ADD_OFFSET(inst.arg);
+                int16_t delta = BF_UNPACK_MOVE_ADD_DELTA(inst.arg);
+                LOG("interpret_bf_bytecode: MOVE_ADD off=%d delta=%d\n", off, delta);
+
+                uint8_t *dst = ptr + off;
+                if (dst < tape || dst >= tape + BF_TAPE_SIZE) {
+                    cprintf("Error: MOVE_ADD destination out of bounds\n");
+                    return;
+                }
+
+                uint8_t v = *ptr;
+                if (v != 0) {
+                    int accum = (int)(*dst) + (int)v * (int)delta;
+                    *dst = (uint8_t) accum;
+                    *ptr = 0;
+                }
+                ip++;
+                break;
+            }
+
             // --- optimized opcodes will be here ---
 
             default:
