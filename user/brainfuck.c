@@ -51,7 +51,7 @@ char repl_help_msg[] =
     "  Enter Brainfuck code directly to compile and execute it.\n"
     "  Special commands:\n"
     "    !help                  Show this help message\n"
-    "    !fmt ascii/hex/dec     Set output format\n"
+    "    !fmt ascii/hex/dec     Set output format (also resets REPL state)\n"
     "    !reset                 Reset REPL state\n"
     "    !quit                  Exit the REPL\n";
 
@@ -231,7 +231,7 @@ envid_t spawn_compiler(void) {
     envid_t compiler_id;
 
     if (repl_ctx.optimize_time) {
-        argv[cur++] = "--Otime";
+        argv[cur++] = "-Otime";
     }
 
     if (repl_ctx.debug_mode) {
@@ -331,6 +331,7 @@ repl_loop(void) {
     char input_buf[PAGE_SIZE];
     size_t buf_pose = 0;
     int c;
+    int res = 0;
 
     cprintf("Brainfuck JIT REPL [JOS Edition]\n");
     cprintf("Type '!help' for list of commands, Ctrl+D or '!quit' to exit\n\n");
@@ -400,6 +401,12 @@ repl_loop(void) {
                 } else {
                     cprintf("Error: Unknown format '%s'. Use ascii, hex, or dec.\n", fmt);
                 }
+                cprintf("Resetting REPL state...\n");
+                sys_env_destroy(repl_ctx.executor_id);
+                repl_ctx.executor_id = spawn_executor();
+                if (repl_ctx.executor_id == 0) {
+                    err_exit();
+                }
             } else if (strncmp(input_buf, "!reset", 6) == 0) {
                 cprintf("Resetting REPL state...\n");
                 sys_env_destroy(repl_ctx.executor_id);
@@ -430,16 +437,29 @@ repl_loop(void) {
         /* Send only the meaningful bytes (no message headers) */
         send_to_compiler();
 
-        ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
+        res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
+        if (res != BF_SUCCESS) {
+            buf_pose = 0;
+            continue;
+        }
         LOG("Received message from compiler, ");
 
         LOG("Compiled bytecode size: %zu bytes\n", repl_ctx.receive_ipc_size);
         // send to executor
 
         memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
+        repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
         send_to_executor();
         LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
-        ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+        res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+        if (res != BF_SUCCESS) {
+            cprintf("Resetting REPL state...\n");
+                sys_env_destroy(repl_ctx.executor_id);
+                repl_ctx.executor_id = spawn_executor();
+                if (repl_ctx.executor_id == 0) {
+                    err_exit();
+            }
+        }
         LOG("Received execution completion from executor\n");
 
         buf_pose = 0;
@@ -450,9 +470,10 @@ repl_loop(void) {
 }
 
 void file_based_usage(void) {
+    int res = 0;
     LOG("Starting file-based execution...\n");
 
-    repl_ctx.fd = open(repl_ctx.input_file, 'r');
+    repl_ctx.fd = open(repl_ctx.input_file, O_RDONLY);
     if (repl_ctx.fd < 0) {
         cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
         err_exit();
@@ -470,13 +491,20 @@ void file_based_usage(void) {
 
     send_to_compiler();
     int perm = 0;
-    ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    if (res != BF_SUCCESS) {
+        err_exit();
+    }
     LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.send_ipc_size);
 
-    memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.send_ipc_size);
+    memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
+    repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
     send_to_executor();
     LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
-    ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+    res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+    if (res != BF_SUCCESS) {
+        err_exit();
+    }
     LOG("Received execution completion from executor\n");
 
     LOG("Exiting file-based execution...\n");
@@ -484,9 +512,10 @@ void file_based_usage(void) {
 }
 
 void complile_only_usage(void) {
+    int res = 0;
     LOG("Starting compile-only execution...\n");
     LOG("Input file: %s\n", repl_ctx.input_file);
-    repl_ctx.fd = open(repl_ctx.input_file, 'r');
+    repl_ctx.fd = open(repl_ctx.input_file, O_RDONLY);
     if (repl_ctx.fd < 0) {
         cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
         err_exit();
@@ -508,7 +537,10 @@ void complile_only_usage(void) {
     send_to_compiler();
 
     int perm = 0;
-    ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    if (res != BF_SUCCESS) {
+        err_exit();
+    }
     LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.send_ipc_size);
 
     // write bytecode to output file
@@ -533,9 +565,10 @@ void complile_only_usage(void) {
 }
 
 void execute_only_usage(void) {
+    int res;
     LOG("Starting execute-only execution...\n");
 
-    repl_ctx.fd = open(repl_ctx.input_file, 'r');
+    repl_ctx.fd = open(repl_ctx.input_file, O_RDONLY);
     if (repl_ctx.fd < 0) {
         cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
         err_exit();
@@ -552,7 +585,10 @@ void execute_only_usage(void) {
     LOG("Read %d bytes from input file\n", n);
     send_to_executor();
     int perm = 0;
-    ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+    res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
+    if (res != BF_SUCCESS) {
+        err_exit();
+    }
     LOG("Received execution completion from executor\n");
 
     return;

@@ -17,6 +17,12 @@
 #define BF_EXECUTOR_FILE "bf_jit_interpreter"
 #define BF_REPL_FILE "brainfuck"
 
+
+enum bf_exec_mode {
+    WRITABLE = PROT_W,
+    EXECUTABLE = PROT_X,
+};
+
 /*
  * System constants
  */
@@ -24,6 +30,7 @@
 #define REPL_TEMP_ADDR ((char *)0xa00000)    // Address for temporarily mappings
 #define COMPILER_TEMP_ADDR ((char *) 0xb00000)
 #define EXECUTOR_TEMP_ADDR ((char *) 0xc00000)
+#define EXECUTOR_CODE_ADDR ((char *) EXECUTOR_TEMP_ADDR + 2 * PAGE_SIZE)   // Fixed address for JIT-compiled code in executor
 #define BF_TAPE_ADDR    ((char *) 0xd00000)        // Fixed address for BF tape in user space
 #define MAX_BF_MSG_LEN (PAGE_SIZE)  // Max BF message size per IPC message
 
@@ -52,8 +59,9 @@ enum {
 enum {
     BF_SUCCESS = 0,
     BF_ERR_SYNTAX = -1,     // Invalid BF syntax (unmatched brackets)
-    BF_ERR_OVERFLOW = -2,   // Code size exceeds page limit
-    BF_ERR_EXECUTION = -3,  // Runtime error during execution
+    BF_ERR_EXECUTION = -2,  // Runtime error during execution
+    BF_ERR_OVERFLOW = -3,    // Code buffer overflow during compilation
+    BF_LOGIC_ERROR = -4,    // Internal logic error
 };
 
 /*
@@ -160,6 +168,9 @@ typedef struct {
     bool REPL_mode;
 
     envid_t repl_id;
+    uint8_t *input_buf;
+    size_t input_size;
+    size_t input_pos;
     const char *input_file;
 } bf_executor_ctx_t;
 

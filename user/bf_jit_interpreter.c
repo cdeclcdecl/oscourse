@@ -24,7 +24,93 @@ bf_executor_ctx_t executor_ctx = {
     .REPL_mode = false,
     .input_file = NULL,
     .repl_id = 0,
+    .input_buf = NULL,
+    .input_size = 0,
+    .input_pos = 0,
 };
+
+/* Make [addr, addr+size) executable and revoke write permission.
+ * Returns 0 on success, <0 on error. Caller must ensure the code bytes
+ * were copied into the pages BEFORE calling this. */
+int WxorX(void *addr, size_t size, enum bf_exec_mode mode)
+{
+    if (size == 0 || addr == NULL) return -1;
+
+    uintptr_t start = ROUNDDOWN((uintptr_t)addr, PAGE_SIZE);
+    size_t pages = ROUNDUP(size, PAGE_SIZE) / PAGE_SIZE;
+
+    for (size_t i = 0; i < pages; i++) {
+        void *pg = (void *)(start + i * PAGE_SIZE);
+
+        int cur = get_prot(pg);
+        if (cur < 0) cur = PROT_R; 
+
+        int want;
+
+        if (mode == WRITABLE) {
+            want = (cur & ~PROT_X) | PROT_W | PROT_R;
+        } else if (mode == EXECUTABLE) {
+            want = (cur & ~PROT_W) | PROT_X | PROT_R;
+        } else {
+            want = cur;
+        }
+
+        if (sys_map_region(0, pg, 0, pg, PAGE_SIZE, want) < 0) {
+            cprintf("make_region_exec: failed to change perms for %p -> 0x%x\n", pg, want);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/*
+ * smart_getchar - stdin reader with line editing and puts it into executor_ctx.input_buf
+ */
+void smart_getchar(void) {
+    
+    memset(executor_ctx.input_buf, 0, executor_ctx.input_size);
+    executor_ctx.input_size = 0;
+    executor_ctx.input_pos = 0;
+
+    int c;
+
+    while (1) {
+        c = getchar();
+        if ((c & 0xff) == 0xf4) {
+            executor_ctx.input_buf[executor_ctx.input_size++] = 0x00;
+            cprintf("^D\n");
+            break;
+        }
+
+        if ((c & 0xff) == 0x0d) {
+            cprintf("\n");
+            executor_ctx.input_buf[executor_ctx.input_size++] = 0x00;
+            break;
+        }
+
+        if ((c & 0xff) == 0x08 || (c & 0xff) == 0x7f) { // Backspace or DEL
+            if (executor_ctx.input_size > 0) {
+                executor_ctx.input_size--;
+                // Move cursor back, overwrite with space, move back again
+                executor_ctx.input_buf[executor_ctx.input_size] = 0;
+                cprintf("\b \b");
+            }
+            continue;
+        }
+
+        if (executor_ctx.input_size == PAGE_SIZE - 1) {
+            break;
+        }
+
+        executor_ctx.input_buf[executor_ctx.input_size++] = (uint8_t)(c & 0xff);
+
+        LOG("smart_getchar: Read char: %c (0x%02x)\n", (char)c, (unsigned char)c);
+
+        cputchar(c); // for echo
+    }
+
+}
 
 /*
  * OUTPUT FORMATTER
@@ -148,12 +234,12 @@ void pure_exec(char *bf, size_t code_size) {
  */
 
 
-void interpret_bf_bytecode() {
+int interpret_bf_bytecode() {
     // using global context
     uint8_t *tape = executor_ctx.tape;
     if (tape == NULL) {
         cprintf("Error: BF tape is not allocated.\n");
-        return;
+        return -BF_ERR_EXECUTION;
     }
 
     uint8_t *ptr = tape + (BF_TAPE_SIZE / 2);
@@ -183,11 +269,11 @@ void interpret_bf_bytecode() {
                 LOG("interpret_bf_bytecode: ptr before INC_PTR: %p\n", ptr);
                 if (ptr + inst.arg >= tape + BF_TAPE_SIZE) {
                     cprintf("interpret_bf_bytecode::[ERROR] Pointer out of bounds (right)\n");
-                    return;
+                    return -BF_ERR_EXECUTION;
                 }
                 if (ptr + inst.arg < tape) {
                     cprintf("interpret_bf_bytecode::[ERROR] Pointer out of bounds (left)\n");
-                    return;
+                    return -BF_ERR_EXECUTION;
                 }
                 ptr += inst.arg;
                 LOG("interpret_bf_bytecode: ptr after INC_PTR: %p\n", ptr);
@@ -198,16 +284,15 @@ void interpret_bf_bytecode() {
                 LOG("interpret_bf_bytecode: DEC_PTR by %d\n", inst.arg);
                 if (ptr - inst.arg < tape) {
                     cprintf("Error: Pointer out of bounds (left)\n");
-                    return;
+                    return -BF_ERR_EXECUTION;
                 }
                 if (ptr - inst.arg >= tape + BF_TAPE_SIZE) {
                     cprintf("Error: Pointer out of bounds (right)\n");
-                    return;
+                    return -BF_ERR_EXECUTION;
                 }
                 ptr -= inst.arg;
                 ip++;
-                break;        
-
+                break;
             case OP_INC_CELL:
                 LOG("interpret_bf_bytecode: INC_CELL by %d (before: %d)\n", inst.arg, *ptr);
                 *ptr += inst.arg;
@@ -232,15 +317,14 @@ void interpret_bf_bytecode() {
 
             case OP_INPUT:
                 LOG("interpret_bf_bytecode: INPUT\n");
-                {
-                    int c = getchar();
-                    if ((c & 0xff) == 0xf4) { // ^D
-                        cprintf("^D\n");
-                        return;
-                    }
-                    *ptr = (uint8_t) c;
-                     cputchar(c); // for echo
-               }
+                if (executor_ctx.input_pos >= executor_ctx.input_size) {
+                    LOG("interpret_bf_bytecode: need more input, calling smart_getchar\n");
+                    smart_getchar();
+                }
+                if ((*ptr = executor_ctx.input_buf[executor_ctx.input_pos++]) == 0xf4) {
+                    LOG("interpret_bf_bytecode: received EOF during INPUT, exiting\n");
+                    return BF_SUCCESS;
+                }
                 ip++;
                 break;
 
@@ -277,7 +361,7 @@ void interpret_bf_bytecode() {
                 while (*ptr != 0) {
                     if (ptr + 1 >= tape + BF_TAPE_SIZE) {
                         cprintf("Error: Pointer out of bounds (right)\n");
-                        return;
+                        return -BF_ERR_EXECUTION;
                     }
                     ptr++;
                 }
@@ -289,7 +373,7 @@ void interpret_bf_bytecode() {
                 while (*ptr != 0) {
                     if (ptr <= tape) {
                         cprintf("Error: Pointer out of bounds (left)\n");
-                        return;
+                        return -BF_ERR_EXECUTION;
                     }
                     ptr--;
                 }
@@ -304,7 +388,7 @@ void interpret_bf_bytecode() {
                 uint8_t *dst = ptr + off;
                 if (dst < tape || dst >= tape + BF_TAPE_SIZE) {
                     cprintf("Error: MOVE_ADD destination out of bounds\n");
-                    return;
+                    return -BF_ERR_EXECUTION;
                 }
 
                 uint8_t v = *ptr;
@@ -321,10 +405,11 @@ void interpret_bf_bytecode() {
 
             default:
                 cprintf("Unknown opcode: %d at ip: %zu\n", inst.opcode, ip);
-                return;
+                return -BF_ERR_EXECUTION;
         }
     }
     LOG("interpret_bf_bytecode: execution finished\n");
+    return BF_SUCCESS;
 }
 
 
@@ -402,41 +487,60 @@ void umain(int argc, char **argv) {
         return;
     }
 
-    cprintf("bf_jit_interpreter starting...\n");
+    LOG("bf_jit_interpreter starting...\n");
     LOG("bf_jit_interpreter parsed arguments\n");
 
     // Allocate BF tape
-    /*
-    if (sys_alloc_region(0, (void *)BF_TAPE_ADDR, BF_TAPE_SIZE, PROT_RW) < 0) {
+    
+    size_t tape_sz = (BF_TAPE_SIZE + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    if (sys_alloc_region(0, (void *)BF_TAPE_ADDR, tape_sz, PROT_RW) < 0) {
         cprintf("bf_jit_interpreter: failed to allocate BF tape\n");
         return;
     }
-    */
+    executor_ctx.tape = (uint8_t *) BF_TAPE_ADDR;
+
+
     //executor_ctx.tape = (uint8_t *) BF_TAPE_ADDR;
 
-    //LOG("Allocated BF tape at %p\n", executor_ctx.tape);
+    LOG("Allocated BF tape at %p\n", executor_ctx.tape);
+
+    // using local bufer for tape!
+    //static uint8_t local_tape[BF_TAPE_SIZE];
+    //executor_ctx.tape = local_tape;
+
+    if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR), PAGE_SIZE, PROT_RW) < 0) {
+            cprintf("bf_jit_interpreter: failed to allocate receive buffer\n");
+            return;
+    }
+
+    if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
+            cprintf("bf_jit_interpreter: failed to allocate input buffer\n");
+            return;
+    }
+
+    executor_ctx.code_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR);
+    executor_ctx.input_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR + PAGE_SIZE);
 
     if (executor_ctx.REPL_mode) {
         LOG("Entering REPL mode...\n");
 
         // REPL mode: wait for compiled code pages and execute them.
-        if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR), PAGE_SIZE, PROT_RW) < 0) {
-            cprintf("bf_jit_interpreter: failed to allocate receive buffer\n");
-            return;
-        }
 
-        executor_ctx.code_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR);
-        
         LOG("Allocated receive buffer at %p\n", (void *)(EXECUTOR_TEMP_ADDR));
 
         while (1) {
             int perm = 0;
             LOG("waiting for compiled code from REPL\n");
+
+            WxorX((void *)EXECUTOR_CODE_ADDR, PAGE_SIZE, WRITABLE);
+
             int32_t val = ipc_recv(&executor_ctx.repl_id, (void *) executor_ctx.code_buf, &executor_ctx.code_size, &perm);
             if (val < 0) {
                 cprintf("bf_jit_interpreter: ipc_recv error %d\n", val);
                 continue;
             }
+
+            WxorX((void *)EXECUTOR_CODE_ADDR, PAGE_SIZE, EXECUTABLE);
 
             LOG("Received IPC message from REPL %08x, size %zu bytes\n",
                 val, executor_ctx.code_size);
@@ -444,24 +548,19 @@ void umain(int argc, char **argv) {
             //LOG("Executing JIT-compiled code...\n");
             //pure_exec((char *)executor_ctx.code_buf, executor_ctx.code_size);
             LOG("Executing JIT-compiled code (interpret_bf_bytecode)...\n");
-            interpret_bf_bytecode();
+            int res = interpret_bf_bytecode();
             LOG("JIT-compiled code execution complete\n");
 
             LOG("Sending execution completion signal back to REPL\n");
-            ipc_send(executor_ctx.repl_id, 0, NULL, 0, 0);
+            ipc_send(executor_ctx.repl_id, res, NULL, 0, 0);
             LOG("Sent execution completion signal back to REPL\n");
 
         }
     } else { // standalone version. avoiding repl, ipc, compilers
-        // using local bufer for tape!
-        static uint8_t local_tape[BF_TAPE_SIZE];
-        executor_ctx.tape = local_tape;
 
         LOG("Using local tape at %p\n", executor_ctx.tape);
-      
-        uint8_t local_code_buf[PAGE_SIZE];
 
-        cprintf("[INTERPRETER] USING STANDALONE VERSION.\n");
+        LOG("USING STANDALONE VERSION.\n");
         int fd = open(executor_ctx.input_file, O_RDONLY);
         if (fd < 0) {
             cprintf("Error: Cannot open file %s\n", executor_ctx.input_file);
@@ -469,7 +568,7 @@ void umain(int argc, char **argv) {
         }
 
         // read bytecode to buffer
-        ssize_t bytes_read = read(fd, local_code_buf, PAGE_SIZE);
+        ssize_t bytes_read = read(fd, executor_ctx.code_buf, PAGE_SIZE);
         if (bytes_read < 0) {
             cprintf("Error: Cannot read from file %s\n", executor_ctx.input_file);
             close(fd);
@@ -478,13 +577,14 @@ void umain(int argc, char **argv) {
 
         close(fd);
 
-        executor_ctx.code_buf = local_code_buf;
         executor_ctx.code_size = bytes_read;
 
         LOG("Loaded bytecode from file, size: %zu bytes\n", executor_ctx.code_size);
 
+        WxorX((void *)EXECUTOR_CODE_ADDR, PAGE_SIZE, EXECUTABLE);
+
         interpret_bf_bytecode();
 
-        LOG("[INTERPRETER] Execution COMPLETE.\n");
+        LOG("Execution COMPLETE.\n");
     }
 }

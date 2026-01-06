@@ -454,8 +454,8 @@ static int compile_bf_to_x86(void) {
  * REPL COMMUNICATION
  * Sends compiled page back to the REPL/executor owner via IPC.
  */
-static void send_to_repl(void) {
-    ipc_send(compiler_ctx.repl_id, BF_MAGIC_EXEC, compiler_ctx.code_buf, compiler_ctx.code_offset, PROT_RW);
+void send_to_repl(int res) {
+    ipc_send(compiler_ctx.repl_id, res, compiler_ctx.code_buf, compiler_ctx.code_offset, PROT_RW);
 }
 
 /*
@@ -504,7 +504,8 @@ void umain(int argc, char **argv) {
             LOG("waiting for source code from REPL\n");
             int32_t val = ipc_recv(&compiler_ctx.repl_id, (void *) compiler_ctx.source, &compiler_ctx.src_len, &perm);
             if (val < 0) {
-                LOG("ipc_recv error %d\n", val);
+                cprintf("[ERROR]: ipc_recv error %d\n", val);
+                ipc_send(compiler_ctx.repl_id, -BF_LOGIC_ERROR, NULL, 0, 0);
                 continue;
             }
 
@@ -514,20 +515,22 @@ void umain(int argc, char **argv) {
             LOG("src_len: %zu\n", compiler_ctx.src_len);
             /* Treat IPC payload as raw bytes: validate reported size and use the receive buffer */
             if (compiler_ctx.src_len == 0 || compiler_ctx.src_len > MAX_BF_MSG_LEN) {
-                LOG("invalid source size %zu\n", compiler_ctx.src_len);
+                cprintf("[ERROR]: invalid source size %zu\n", compiler_ctx.src_len);
+                ipc_send(compiler_ctx.repl_id, -BF_LOGIC_ERROR, NULL, 0, 0);
                 continue;
             }
 
             compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
 
             int res = compile_bf_to_x86();
-            if (res < 0) {
-                LOG("compile failed (%d)\n", res);
+            if (res != BF_SUCCESS) {
+                cprintf("[COMPILATION ERROR]: compile failed (%d)\n", res);
+                ipc_send(compiler_ctx.repl_id, res, NULL, 0, 0);
                 continue;
             }
 
             LOG("sending bytecode to REPL\n");
-            send_to_repl();
+            send_to_repl(res);
 
             LOG("Compiled and sent bytecode of size %zu to REPL %08x\n", compiler_ctx.code_offset, compiler_ctx.repl_id);
 
@@ -548,13 +551,13 @@ void umain(int argc, char **argv) {
 
     int fd_in = open(compiler_ctx.input_file, O_RDONLY);
     if (fd_in < 0) {
-        LOG("failed to open input file %s\n", compiler_ctx.input_file);
+        cprintf("failed to open input file %s\n", compiler_ctx.input_file);
         return;
     }
 
     ssize_t n = read(fd_in, (void *)compiler_ctx.source, PAGE_SIZE);
     if (n < 0) {
-        LOG("failed to read input file %s\n", compiler_ctx.input_file);
+        cprintf("failed to read input file %s\n", compiler_ctx.input_file);
         close(fd_in);
         return;
     }
@@ -564,19 +567,19 @@ void umain(int argc, char **argv) {
 
     int res = compile_bf_to_x86();
     if (res < 0) {
-        LOG("compile failed (%d)\n", res);
+        cprintf("[COMPILATION ERROR]:compile failed (%d)\n", res);
         return;
     }
 
     int fd_out = open(compiler_ctx.output_file, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd_out < 0) {
-        LOG("failed to open output file %s\n", compiler_ctx.output_file);
+        cprintf("failed to open output file %s\n", compiler_ctx.output_file);
         return;
     }
 
     ssize_t written = write(fd_out, compiler_ctx.code_buf, compiler_ctx.code_offset);
     if (written < 0 || (size_t)written != compiler_ctx.code_offset) {
-        LOG("failed to write bytecode to %s\n", compiler_ctx.output_file);
+        cprintf("failed to write bytecode to %s\n", compiler_ctx.output_file);
         close(fd_out);
         return;
     }
