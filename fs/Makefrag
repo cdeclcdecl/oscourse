@@ -15,6 +15,7 @@ FSIMGTXTFILES :=	fs/newmotd \
 			fs/testshell.key \
 			fs/testshell.sh \
 			fs/test.bf \
+			fs/optimizers_test.bf \
 			fs/test_bytecode.bin
 
 
