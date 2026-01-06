@@ -295,7 +295,7 @@ int interpret_bf_bytecode() {
                 break;
             case OP_INC_CELL:
                 LOG("interpret_bf_bytecode: INC_CELL by %d (before: %d)\n", inst.arg, *ptr);
-                *ptr += inst.arg;
+                *ptr += (uint8_t) inst.arg & 0xff;
                 LOG("interpret_bf_bytecode: INC_CELL after: %d\n", *ptr);
                 ip++;
                 LOG("interpret_bf_bytecode: ip incremented to %zu\n", ip);
@@ -303,7 +303,7 @@ int interpret_bf_bytecode() {
 
             case OP_DEC_CELL:
                 LOG("interpret_bf_bytecode: DEC_CELL by %d (before: %d)\n", inst.arg, *ptr);
-                *ptr -= inst.arg;
+                *ptr -= (uint8_t) inst.arg & 0xff;
                 LOG("interpret_bf_bytecode: DEC_CELL after: %d\n", *ptr);
                 ip++;
                 break;
