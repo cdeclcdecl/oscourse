@@ -30,6 +30,11 @@
 
 #define LOG(msg, ...) if (compiler_ctx.debug_mode) { cprintf("[COMPILER]: " msg, ##__VA_ARGS__); }
 
+// Whitespace helper (ignored by syntax checker)
+static inline bool is_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
 bf_compiler_context_t compiler_ctx = {
     .source = NULL,
     .src_len = 0,
@@ -150,24 +155,21 @@ static int validate_syntax(void) {
     compiler_ctx.loop_depth = 0;
     for (size_t i = 0; i < compiler_ctx.src_len; i++) {
         char c = compiler_ctx.source[i];
-        bool ok = false;
-        switch (c) {
-            case '>': case '<': case '+': case '-': case '.': case ',': case '[': case ']':
-                ok = true;
-                break;
-            default:
-                break;
-        }
+        if (is_space(c)) continue;                     // skip whitespace/newlines
+
+        bool ok = (c=='>'||c=='<'||c=='+'||c=='-'||c=='.'||c==','||c=='['||c==']');
         if (!ok) return -BF_ERR_SYNTAX;
 
         if (c == '[') {
             if (compiler_ctx.loop_depth >= (int)(sizeof(compiler_ctx.loop_stack) / sizeof(compiler_ctx.loop_stack[0]))) {
-                return -BF_ERR_SYNTAX;
+                return -BF_ERR_SYNTAX;                 // loop nesting too deep
             }
             compiler_ctx.loop_stack[compiler_ctx.loop_depth++] = i;
+            LOG("Validate: push '[' src=%zu depth=%d\n", i, compiler_ctx.loop_depth);
         } else if (c == ']') {
-            if (compiler_ctx.loop_depth == 0) return -BF_ERR_SYNTAX;
+            if (compiler_ctx.loop_depth == 0) return -BF_ERR_SYNTAX; // unmatched ]
             compiler_ctx.loop_depth--;
+            LOG("Validate: pop ']' src=%zu depth=%d\n", i, compiler_ctx.loop_depth);
         }
     }
 
@@ -176,46 +178,126 @@ static int validate_syntax(void) {
 }
 
 /*
- * TIME OPTIMIZER
- * Lightweight run-length collapse for >,<,+,- when -Otime is enabled.
+/*
+ * Emit one instruction with bounds checking
  */
-static void optimize_instructions(void) {
-    static char optimized[MAX_BF_MSG_LEN];
-    size_t w = 0;
-    for (size_t i = 0; i < compiler_ctx.src_len && w < MAX_BF_MSG_LEN - 1; ) {
-        char c = compiler_ctx.source[i];
-        if (!compiler_ctx.optimize_time || (c != '>' && c != '<' && c != '+' && c != '-')) {
-            optimized[w++] = c;
-            i++;
-            continue;
-        }
-
-        size_t run = 1;
-        while (i + run < compiler_ctx.src_len && compiler_ctx.source[i + run] == c && run < 255) run++;
-        for (size_t k = 0; k < run && w < MAX_BF_MSG_LEN - 1; k++) optimized[w++] = c;
-        i += run;
-    }
-    optimized[w] = '\0';
-    memcpy((void *) compiler_ctx.source, (const void *) optimized, w);
-    compiler_ctx.src_len = w;
+static int emit_instruction(Instruction *program, size_t max_instr, size_t *count, Opcode op, int32_t arg) {
+    if (*count >= max_instr) return -BF_ERR_OVERFLOW;
+    program[*count].opcode = op;
+    program[*count].arg = arg;
+    (*count)++;
+    return 0;
 }
 
 /*
- * COMPILE ENTRY POINT
- * Here we only package validated/optimized BF source into bf_bytecode_msg_t.
+ * REAL BF->BYTECODE COMPILATION
+ * - validates brackets (validate_syntax)
+ * - aggregates runs of > < + -
+ * - builds Instruction array with jump patching
  */
 static int compile_bf_to_x86(void) {
     int res = validate_syntax();
     if (res < 0) return res;
+    LOG("Compile: syntax ok, src_len=%zu\n", compiler_ctx.src_len);
 
-    optimize_instructions();
+    Instruction *program = (Instruction *) compiler_ctx.code_buf;
+    size_t max_instr = PAGE_SIZE / sizeof(Instruction);
+    size_t instr_count = 0;
+    compiler_ctx.loop_depth = 0; // reuse loop_stack for instruction indices
 
-    /* Produce raw bytecode payload in the code buffer (no magic headers)
-     * Receiver will use the IPC-provided size to determine valid bytes.
-     */
-    if (compiler_ctx.src_len > PAGE_SIZE) return -BF_ERR_OVERFLOW;
-    memcpy(compiler_ctx.code_buf, compiler_ctx.source, compiler_ctx.src_len);
-    compiler_ctx.code_offset = compiler_ctx.src_len;
+    for (size_t i = 0; i < compiler_ctx.src_len; ) {
+        char c = compiler_ctx.source[i];
+
+        if (is_space(c)) { i++; continue; }
+
+        // aggregate pointer shifts
+        if (c == '>' || c == '<') {
+            int delta = 0;
+            while (i < compiler_ctx.src_len) {
+                char d = compiler_ctx.source[i];
+                if (d == '>') { delta++; i++; }
+                else if (d == '<') { delta--; i++; }
+                else if (is_space(d)) { i++; }
+                else break;
+            }
+            if (delta > 0) {
+                res = emit_instruction(program, max_instr, &instr_count, OP_INC_PTR, delta);
+            } else if (delta < 0) {
+                res = emit_instruction(program, max_instr, &instr_count, OP_DEC_PTR, -delta);
+            } else {
+                continue; // net zero shift
+            }
+            LOG("Emit: PTR delta=%d instr=%zu\n", delta, instr_count - 1);
+            if (res < 0) return res;
+            continue;
+        }
+
+        // aggregate cell increments
+        if (c == '+' || c == '-') {
+            int delta = 0;
+            while (i < compiler_ctx.src_len) {
+                char d = compiler_ctx.source[i];
+                if (d == '+') { delta++; i++; }
+                else if (d == '-') { delta--; i++; }
+                else if (is_space(d)) { i++; }
+                else break;
+            }
+            if (delta > 0) {
+                res = emit_instruction(program, max_instr, &instr_count, OP_INC_CELL, delta);
+            } else if (delta < 0) {
+                res = emit_instruction(program, max_instr, &instr_count, OP_DEC_CELL, -delta);
+            } else {
+                continue;
+            }
+            LOG("Emit: CELL delta=%d instr=%zu\n", delta, instr_count - 1);
+            if (res < 0) return res;
+            continue;
+        }
+
+        switch (c) {
+            case '.':
+                res = emit_instruction(program, max_instr, &instr_count, OP_OUTPUT, 0);
+                LOG("Emit: OUTPUT instr=%zu\n", instr_count - 1);
+                i++;
+                break;
+            case ',':
+                res = emit_instruction(program, max_instr, &instr_count, OP_INPUT, 0);
+                LOG("Emit: INPUT instr=%zu\n", instr_count - 1);
+                i++;
+                break;
+            case '[': {
+                // record '[' position in stack, patch later
+                if (compiler_ctx.loop_depth >= (int)(sizeof(compiler_ctx.loop_stack) / sizeof(compiler_ctx.loop_stack[0]))) {
+                    return -BF_ERR_SYNTAX;
+                }
+                int start_idx = (int) instr_count;
+                compiler_ctx.loop_stack[compiler_ctx.loop_depth++] = start_idx;
+                res = emit_instruction(program, max_instr, &instr_count, OP_LOOP_START, 0);
+                LOG("Emit: LOOP_START instr=%d depth=%d\n", start_idx, compiler_ctx.loop_depth);
+                i++;
+                break;
+            }
+            case ']': {
+                if (compiler_ctx.loop_depth == 0) return -BF_ERR_SYNTAX; // unmatched ]
+                int start_idx = compiler_ctx.loop_stack[--compiler_ctx.loop_depth];
+                // set '[' arg to instruction after matching ']'
+                program[start_idx].arg = (int32_t) instr_count;
+                res = emit_instruction(program, max_instr, &instr_count, OP_LOOP_END, start_idx);
+                LOG("Emit: LOOP_END instr=%zu match=%d target=%d\n", instr_count - 1, start_idx, program[start_idx].arg);
+                i++;
+                break;
+            }
+            default:
+                return -BF_ERR_SYNTAX;
+        }
+
+        if (res < 0) return res;
+    }
+
+    if (compiler_ctx.loop_depth != 0) return -BF_ERR_SYNTAX; // unclosed brackets
+
+    compiler_ctx.code_offset = instr_count * sizeof(Instruction);
+    LOG("Compile: done instr=%zu bytes=%zu\n", instr_count, compiler_ctx.code_offset);
     return 0;
 }
 
@@ -273,7 +355,7 @@ void umain(int argc, char **argv) {
             LOG("waiting for source code from REPL\n");
             int32_t val = ipc_recv(&compiler_ctx.repl_id, (void *) compiler_ctx.source, &compiler_ctx.src_len, &perm);
             if (val < 0) {
-                cprintf("bf_compiler: ipc_recv error %d\n", val);
+                LOG("ipc_recv error %d\n", val);
                 continue;
             }
 
@@ -283,7 +365,7 @@ void umain(int argc, char **argv) {
             LOG("src_len: %zu\n", compiler_ctx.src_len);
             /* Treat IPC payload as raw bytes: validate reported size and use the receive buffer */
             if (compiler_ctx.src_len == 0 || compiler_ctx.src_len > MAX_BF_MSG_LEN) {
-                cprintf("bf_compiler: invalid source size %zu\n", compiler_ctx.src_len);
+                LOG("invalid source size %zu\n", compiler_ctx.src_len);
                 continue;
             }
 
@@ -291,7 +373,7 @@ void umain(int argc, char **argv) {
 
             int res = compile_bf_to_x86();
             if (res < 0) {
-                cprintf("bf_compiler: compile failed (%d)\n", res);
+                LOG("compile failed (%d)\n", res);
                 continue;
             }
 
@@ -308,19 +390,49 @@ void umain(int argc, char **argv) {
     // File-based mode: read input file, compile, write output file.
     LOG("Entering file-based compilation mode...\n");
 
+    // standalone compilation: read BF, compile to Instruction[], write to file
+    if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
+        cprintf("bf_compiler: failed to allocate source buffer page\n");
+        return;
+    }
+    compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
+
     int fd_in = open(compiler_ctx.input_file, O_RDONLY);
     if (fd_in < 0) {
-        cprintf("bf_compiler: failed to open input file %s\n", compiler_ctx.input_file);
+        LOG("failed to open input file %s\n", compiler_ctx.input_file);
         return;
     }
 
-    ssize_t n = read(fd_in, compiler_ctx.code_buf, PAGE_SIZE);
+    ssize_t n = read(fd_in, (void *)compiler_ctx.source, PAGE_SIZE);
     if (n < 0) {
-        cprintf("bf_compiler: failed to read input file %s\n", compiler_ctx.input_file);
+        LOG("failed to read input file %s\n", compiler_ctx.input_file);
         close(fd_in);
+        return;
+    }
+    close(fd_in);
+
+    compiler_ctx.src_len = (size_t) n;
+
+    int res = compile_bf_to_x86();
+    if (res < 0) {
+        LOG("compile failed (%d)\n", res);
+        return;
     }
 
-    // TODO
+    int fd_out = open(compiler_ctx.output_file, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd_out < 0) {
+        LOG("failed to open output file %s\n", compiler_ctx.output_file);
+        return;
+    }
 
+    ssize_t written = write(fd_out, compiler_ctx.code_buf, compiler_ctx.code_offset);
+    if (written < 0 || (size_t)written != compiler_ctx.code_offset) {
+        LOG("failed to write bytecode to %s\n", compiler_ctx.output_file);
+        close(fd_out);
+        return;
+    }
+
+    close(fd_out);
+    LOG("Standalone compile succeeded: %zu bytes -> %s\n", compiler_ctx.code_offset, compiler_ctx.output_file);
     return;
 }
