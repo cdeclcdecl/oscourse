@@ -19,44 +19,45 @@
 #include <inc/bf.h>
 
 bf_repl_ctx_t repl_ctx = {
-    .compiler_id = 0,
-    .executor_id = 0,
-    .interactive = true,
-    .compile_only = false,
-    .execute_only = false,
-    .optimize_time = false,
-    .output_format = BF_OUTPUT_ASCII,
-    .input_file = NULL,
-    .fd = -1,
-    .send_ipc_buf = NULL,
-    .receive_ipc_buf = NULL,
+        .compiler_id = 0,
+        .executor_id = 0,
+        .interactive = true,
+        .compile_only = false,
+        .execute_only = false,
+        .optimize_time = false,
+        .output_format = BF_OUTPUT_ASCII,
+        .input_file = NULL,
+        .fd = -1,
+        .send_ipc_buf = NULL,
+        .receive_ipc_buf = NULL,
 };
 
-#define LOG(msg, ...) if (repl_ctx.debug_mode) { cprintf("[REPL]: " msg, ##__VA_ARGS__); }
+#define LOG(msg, ...) \
+    if (repl_ctx.debug_mode) { cprintf("[REPL]: " msg, ##__VA_ARGS__); }
 
 char usage_msg[] =
-    "Usage: brainfuck [options]\n"
-    "  -bc (--bytecode)         : Compile only (no execution)\n"
-    "  -o (--output) <file>     : Specify output file for bytecode (only for -bc option) (default: out.bc)\n"
-    "  -e (--exec)              : Execute precompiled bytecode\n"
-    "  -Otime (--optimize)      : Enable time optimizations\n"
-    "  -p (--print) <format>    : Set output format (ascii/hex/dec)\n"
-    "  -h (--help)              : Show this help message\n"
-    "  -d (--debug)             : Enable debug mode\n"
-    "  <file>                   : Input file (optional)\n";
+        "Usage: brainfuck [options]\n"
+        "  -bc (--bytecode)         : Compile only (no execution)\n"
+        "  -o (--output) <file>     : Specify output file for bytecode (only for -bc option) (default: out.bc)\n"
+        "  -e (--exec)              : Execute precompiled bytecode\n"
+        "  -Otime (--optimize)      : Enable time optimizations\n"
+        "  -p (--print) <format>    : Set output format (ascii/hex/dec)\n"
+        "  -h (--help)              : Show this help message\n"
+        "  -d (--debug)             : Enable debug mode\n"
+        "  <file>                   : Input file (optional)\n";
 
 
 char repl_help_msg[] =
-    "Brainfuck REPL Help:\n"
-    "  Enter Brainfuck code directly to compile and execute it.\n"
-    "  Special commands:\n"
-    "    !help                  Show this help message\n"
-    "    !fmt ascii/hex/dec     Set output format (also resets REPL state)\n"
-    "    !reset                 Reset REPL state\n"
-    "    !quit                  Exit the REPL\n";
+        "Brainfuck REPL Help:\n"
+        "  Enter Brainfuck code directly to compile and execute it.\n"
+        "  Special commands:\n"
+        "    !help                  Show this help message\n"
+        "    !fmt ascii/hex/dec     Set output format (also resets REPL state)\n"
+        "    !reset                 Reset REPL state\n"
+        "    !quit                  Exit the REPL\n";
 
 
- /*
+/*
  * RESOURCE CLEANUP
  *
  * RESPONSIBILITIES:
@@ -67,7 +68,8 @@ char repl_help_msg[] =
  *   3. Free allocated memory buffers
  *
  */
-void cleanup_resources(void) {
+void
+cleanup_resources(void) {
     LOG("Cleaning up resources...\n");
 
     if (repl_ctx.compiler_id != 0) {
@@ -99,7 +101,8 @@ void cleanup_resources(void) {
     return;
 }
 
-void err_exit(void) {
+void
+err_exit(void) {
     LOG("Exiting with error\n");
     cleanup_resources();
     exit();
@@ -115,7 +118,8 @@ void err_exit(void) {
  *   0 = success
  *   -1 = invalid arguments
  */
-int parse_repl_arguments(int argc, char **argv) {
+int
+parse_repl_arguments(int argc, char **argv) {
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
@@ -193,7 +197,7 @@ int parse_repl_arguments(int argc, char **argv) {
     if (repl_ctx.compile_only && repl_ctx.output_file == NULL) {
         repl_ctx.output_file = "out.bc";
     }
-    
+
     if (!repl_ctx.compile_only && repl_ctx.output_file != NULL) {
         cprintf("Error: -o option can only be used with -bc\n\n");
         return -1;
@@ -207,10 +211,8 @@ int parse_repl_arguments(int argc, char **argv) {
     }
 
 
-
     return 0;
 }
-
 
 
 /*
@@ -218,13 +220,14 @@ int parse_repl_arguments(int argc, char **argv) {
  *
  * spawns compiler/executor processes
  * For now, not passing any arguments because not implemented
- * 
+ *
  * RETURN:
  *  envid_t of spawned process on success
  *  0 on failure
- * 
+ *
  */
-envid_t spawn_compiler(void) {
+envid_t
+spawn_compiler(void) {
 
     size_t cur = 2;
     char *argv[5] = {BF_COMPILER_FILE, "--REPL", NULL, NULL, NULL};
@@ -240,7 +243,7 @@ envid_t spawn_compiler(void) {
 
     LOG("Spawning compiler process...\n");
 
-    if ((compiler_id = spawn(argv[0], (const char **) argv)) < 0) {
+    if ((compiler_id = spawn(argv[0], (const char **)argv)) < 0) {
         cprintf("Error: Failed to spawn compiler process\n");
         return 0;
     }
@@ -250,9 +253,10 @@ envid_t spawn_compiler(void) {
     return compiler_id;
 }
 
-envid_t spawn_executor(void) {
+envid_t
+spawn_executor(void) {
     // Still TODO : cli arguments are not processed yet
-    
+
     size_t cur = 2;
     char *argv[6] = {BF_EXECUTOR_FILE, "--REPL", NULL, NULL, NULL, NULL};
     envid_t executor_id;
@@ -262,25 +266,25 @@ envid_t spawn_executor(void) {
     }
 
     switch (repl_ctx.output_format) {
-        case BF_OUTPUT_ASCII:
-            argv[cur++] = "--print";
-            argv[cur++] = "ascii";
-            break;
-        case BF_OUTPUT_HEX:
-            argv[cur++] = "--print";
-            argv[cur++] = "hex";
-            break;
-        case BF_OUTPUT_DEC:
-            argv[cur++] = "--print";
-            argv[cur++] = "dec";
-            break;
-        default:
-            break;
+    case BF_OUTPUT_ASCII:
+        argv[cur++] = "--print";
+        argv[cur++] = "ascii";
+        break;
+    case BF_OUTPUT_HEX:
+        argv[cur++] = "--print";
+        argv[cur++] = "hex";
+        break;
+    case BF_OUTPUT_DEC:
+        argv[cur++] = "--print";
+        argv[cur++] = "dec";
+        break;
+    default:
+        break;
     }
 
     LOG("Spawning executor process...\n");
 
-    if ((executor_id = spawn(argv[0], (const char **) argv)) < 0) {
+    if ((executor_id = spawn(argv[0], (const char **)argv)) < 0) {
         cprintf("Error: Failed to spawn executor process\n");
         return 0;
     }
@@ -294,7 +298,8 @@ envid_t spawn_executor(void) {
  * COMPILER IPC COMMUNICATION
  * Sends raw data page to compiler/executor process via IPC.
  */
-void send_to_compiler(void) {
+void
+send_to_compiler(void) {
     LOG("Sendinfg to compiler %lu bytes\n", repl_ctx.send_ipc_size);
     ipc_send(repl_ctx.compiler_id, 0, repl_ctx.send_ipc_buf, repl_ctx.send_ipc_size, PROT_RW);
 }
@@ -304,7 +309,8 @@ void send_to_compiler(void) {
  * Sends page with bytecode to executor process via IPC.
  *
  */
-void send_to_executor(void) {
+void
+send_to_executor(void) {
     LOG("Sending to executor %lu bytes\n", repl_ctx.send_ipc_size);
     ipc_send(repl_ctx.executor_id, 0, repl_ctx.send_ipc_buf, repl_ctx.send_ipc_size, PROT_RW);
 }
@@ -332,12 +338,12 @@ repl_loop(void) {
     int c;
     int res = 0;
 
-    uint8_t *input_buf = (uint8_t *) repl_ctx.send_ipc_buf; /* read directly into IPC buffer */
+    uint8_t *input_buf = (uint8_t *)repl_ctx.send_ipc_buf; /* read directly into IPC buffer */
 
     cprintf("Brainfuck JIT REPL [JOS Edition]\n");
     cprintf("Type '!help' for list of commands, Ctrl+D or '!quit' to exit\n\n");
 
-    while(1) {
+    while (1) {
         cprintf(">>>> ");
 
         while (((c = getchar()) & 0xff) != 0xf4 && (c & 0xff) != 0x0d && buf_pose < MAX_BF_MSG_LEN - 1) {
@@ -362,7 +368,6 @@ repl_loop(void) {
 
         LOG("Exited reading loop");
 
-        
 
         if ((c & 0xff) == 0xf4) {
             LOG("Received EOF, exiting REPL loop\n");
@@ -378,14 +383,14 @@ repl_loop(void) {
 
         if (buf_pose > 0 && input_buf[0] == '!') {
             LOG("Processing REPL command: %s\n", input_buf);
-            if (strncmp((const char *) input_buf, "!quit", 5) == 0) {
+            if (strncmp((const char *)input_buf, "!quit", 5) == 0) {
                 LOG("Received !quit command, exiting REPL loop\n");
                 cprintf("Exiting REPL...\n");
                 break;
-            } else if (strncmp((const char *) input_buf, "!help", 5) == 0) {
+            } else if (strncmp((const char *)input_buf, "!help", 5) == 0) {
                 cprintf("%s", repl_help_msg);
-            } else if (strncmp((const char *) input_buf, "!fmt ", 5) == 0) {
-                char *fmt = ((char *) input_buf) + 5;
+            } else if (strncmp((const char *)input_buf, "!fmt ", 5) == 0) {
+                char *fmt = ((char *)input_buf) + 5;
                 if (strncmp(fmt, "ascii", 5) == 0) {
                     repl_ctx.output_format = BF_OUTPUT_ASCII;
                     cprintf("Output format set to ASCII\n");
@@ -404,7 +409,7 @@ repl_loop(void) {
                 if (repl_ctx.executor_id == 0) {
                     err_exit();
                 }
-            } else if (strncmp((const char *) input_buf, "!reset", 6) == 0) {
+            } else if (strncmp((const char *)input_buf, "!reset", 6) == 0) {
                 cprintf("Resetting REPL state...\n");
                 sys_env_destroy(repl_ctx.executor_id);
                 repl_ctx.executor_id = spawn_executor();
@@ -441,17 +446,17 @@ repl_loop(void) {
         LOG("Compiled bytecode size: %zu bytes\n", repl_ctx.receive_ipc_size);
         // send to executor
 
-        memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
+        memcpy((void *)repl_ctx.send_ipc_buf, (void *)repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
         repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
         send_to_executor();
         LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
         res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
         if (res != BF_SUCCESS) {
             cprintf("Resetting REPL state...\n");
-                sys_env_destroy(repl_ctx.executor_id);
-                repl_ctx.executor_id = spawn_executor();
-                if (repl_ctx.executor_id == 0) {
-                    err_exit();
+            sys_env_destroy(repl_ctx.executor_id);
+            repl_ctx.executor_id = spawn_executor();
+            if (repl_ctx.executor_id == 0) {
+                err_exit();
             }
         }
         LOG("Received execution completion from executor\n");
@@ -463,7 +468,8 @@ repl_loop(void) {
     return;
 }
 
-void file_based_usage(void) {
+void
+file_based_usage(void) {
     int res = 0;
     LOG("Starting file-based execution...\n");
 
@@ -490,7 +496,7 @@ void file_based_usage(void) {
         err_exit();
     }
     LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.receive_ipc_size);
-    memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
+    memcpy((void *)repl_ctx.send_ipc_buf, (void *)repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
     repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
     send_to_executor();
     LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
@@ -504,7 +510,8 @@ void file_based_usage(void) {
     return;
 }
 
-void complile_only_usage(void) {
+void
+complile_only_usage(void) {
     int res = 0;
     LOG("Starting compile-only execution...\n");
     LOG("Input file: %s\n", repl_ctx.input_file);
@@ -515,15 +522,15 @@ void complile_only_usage(void) {
     }
     LOG("Opened input file descriptor %d\n", repl_ctx.fd);
 
-     // send filename to compiler via IPC
-    
+    // send filename to compiler via IPC
+
     LOG("Reading Brainfuck source from file %s...\n", repl_ctx.input_file);
     int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
     if (n < 0) {
         cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
         err_exit();
     }
-    
+
     repl_ctx.send_ipc_size = n;
     LOG("Read %d bytes from input file\n", n);
 
@@ -557,7 +564,8 @@ void complile_only_usage(void) {
     return;
 }
 
-void execute_only_usage(void) {
+void
+execute_only_usage(void) {
     int res;
     LOG("Starting execute-only execution...\n");
 
@@ -606,12 +614,12 @@ umain(int argc, char **argv) {
 
     LOG("Successfully parsed arguments.\n");
     LOG("\tinteractive=%d\n\tcompile_only=%d\n\texecute_only=%d\n\toptimize_time=%d\n\toutput_format=%d\n\tinput_file=%s\n",
-            repl_ctx.interactive,
-            repl_ctx.compile_only,
-            repl_ctx.execute_only,
-            repl_ctx.optimize_time,
-            repl_ctx.output_format,
-            repl_ctx.input_file ? repl_ctx.input_file : "NULL");
+        repl_ctx.interactive,
+        repl_ctx.compile_only,
+        repl_ctx.execute_only,
+        repl_ctx.optimize_time,
+        repl_ctx.output_format,
+        repl_ctx.input_file ? repl_ctx.input_file : "NULL");
 
     // Allocate IPC buffers (expand to MAX_BF_MSG_LEN to support multi-page IPC)
     res = sys_alloc_region(0, (void *)REPL_TEMP_ADDR, MAX_BF_MSG_LEN, PROT_RW);
@@ -628,7 +636,7 @@ umain(int argc, char **argv) {
         err_exit();
     }
 
-    repl_ctx.receive_ipc_buf = (void *) (REPL_TEMP_ADDR + MAX_BF_MSG_LEN);
+    repl_ctx.receive_ipc_buf = (void *)(REPL_TEMP_ADDR + MAX_BF_MSG_LEN);
 
     // if user wants to only execute precompiled bytecode
     if (repl_ctx.execute_only) {
@@ -676,12 +684,12 @@ umain(int argc, char **argv) {
 
     // if user wants file-based execution
     if (repl_ctx.input_file != NULL && !repl_ctx.compile_only && !repl_ctx.execute_only && !repl_ctx.interactive) {
-    
+
         LOG("File-based execution mode is not implemented yet\n");
-    
+
         repl_ctx.compiler_id = spawn_compiler();
         if (repl_ctx.compiler_id == 0) {
-            err_exit(); 
+            err_exit();
         }
 
         repl_ctx.executor_id = spawn_executor();
@@ -691,7 +699,6 @@ umain(int argc, char **argv) {
 
         file_based_usage();
     }
-
 
 
     cleanup_resources();
