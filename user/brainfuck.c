@@ -480,7 +480,12 @@ file_based_usage(void) {
     }
     LOG("Opened input file descriptor %d\n", repl_ctx.fd);
 
-    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
+    int n = 0;
+    int cur = 0;
+    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, MAX_BF_MSG_LEN - n)) > 0) {
+        n += cur;
+    }
+
     if (n < 0) {
         cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
         err_exit();

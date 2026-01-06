@@ -150,10 +150,128 @@ format_output(char sym) {
     }
 }
 
-// NOT USED! USE interpret_bf_bytecode INSTEAD!
-// for testing purposes
-// no syntax checks, optimizations, or IPC yet
-// just pure interpretation
+/*
+ * JIT helper called from generated machine code.
+ * Calling convention: int bf_exec_helper(int opcode, int arg)
+ * - opcode in edi (rdi), arg in esi (rsi)
+ * - returns int in eax (used for loop tests)
+ */
+int
+bf_exec_helper(int opcode, int arg) {
+    if (executor_ctx.tape == NULL) {
+        cprintf("bf_exec_helper: tape not initialized\n");
+        executor_ctx.last_error = BF_ERR_EXECUTION;
+        return -BF_ERR_EXECUTION;
+    }
+
+    size_t ptr = executor_ctx.ptr_offset;
+    uint8_t *tape = executor_ctx.tape;
+
+    switch (opcode) {
+    case OP_INC_PTR:
+        if ((ptr + (size_t)arg) >= BF_TAPE_SIZE) {
+            cprintf("bf_exec_helper: PTR out of bounds (right)\n");
+            executor_ctx.last_error = BF_ERR_EXECUTION;
+            return -BF_ERR_EXECUTION;
+        }
+        ptr += (size_t)arg;
+        break;
+    case OP_DEC_PTR:
+        if ((ptr < (size_t)arg) || (ptr - (size_t)arg) >= BF_TAPE_SIZE) {
+            cprintf("bf_exec_helper: PTR out of bounds (left)\n");
+            executor_ctx.last_error = BF_ERR_EXECUTION;
+            return -BF_ERR_EXECUTION;
+        }
+        ptr -= (size_t)arg;
+        break;
+    case OP_INC_CELL: {
+        uint8_t v = tape[ptr];
+        v = (uint8_t)((int)v + arg);
+        tape[ptr] = v;
+    } break;
+    case OP_DEC_CELL: {
+        uint8_t v = tape[ptr];
+        v = (uint8_t)((int)v - arg);
+        tape[ptr] = v;
+    } break;
+    case OP_OUTPUT:
+        format_output((char)tape[ptr]);
+        break;
+    case OP_INPUT:
+        if (executor_ctx.input_pos >= executor_ctx.input_size) {
+            smart_getchar();
+        }
+        tape[ptr] = executor_ctx.input_buf[executor_ctx.input_pos++];
+        if (tape[ptr] == 0xf4) {
+            cprintf("^D\n");
+            /* EOF - leave as is */
+        }
+        break;
+    case OP_LOOP_START:
+        executor_ctx.ptr_offset = ptr; /* commit */
+        return (int)tape[ptr];
+
+    case OP_CLEAR:
+        tape[ptr] = 0;
+        break;
+
+    case OP_SEEK_RIGHT:
+        while (tape[ptr] != 0) {
+            if (ptr + 1 >= BF_TAPE_SIZE) {
+                cprintf("bf_exec_helper: SEEK_RIGHT out of bounds\n");
+                executor_ctx.last_error = BF_ERR_EXECUTION;
+                return -BF_ERR_EXECUTION;
+            }
+            ptr++;
+        }
+        break;
+
+    case OP_SEEK_LEFT:
+        while (tape[ptr] != 0) {
+            if (ptr == 0) {
+                cprintf("bf_exec_helper: SEEK_LEFT out of bounds\n");
+                executor_ctx.last_error = BF_ERR_EXECUTION;
+                return -BF_ERR_EXECUTION;
+            }
+            ptr--;
+        }
+        break;
+
+    case OP_MOVE_ADD: {
+        int32_t packed = arg;
+        int16_t off = BF_UNPACK_MOVE_ADD_OFFSET(packed);
+        int16_t delta = BF_UNPACK_MOVE_ADD_DELTA(packed);
+        /* compute dst and bounds-check */
+        ssize_t dst_idx = (ssize_t)ptr + (ssize_t)off;
+        if (dst_idx < 0 || (size_t)dst_idx >= BF_TAPE_SIZE) {
+            cprintf("bf_exec_helper: MOVE_ADD destination out of bounds off=%d\n", off);
+            executor_ctx.last_error = BF_ERR_EXECUTION;
+            return -BF_ERR_EXECUTION;
+        }
+        size_t dst = (size_t)dst_idx;
+        uint8_t v = tape[ptr];
+        if (v != 0) {
+            int accum = (int)tape[dst] + (int)v * (int)delta;
+            tape[dst] = (uint8_t)accum;
+            tape[ptr] = 0;
+        }
+    } break;
+
+    default:
+        cprintf("bf_exec_helper: unknown opcode %d\n", opcode);
+        executor_ctx.last_error = BF_ERR_EXECUTION;
+        return -BF_ERR_EXECUTION;
+    }
+
+    executor_ctx.ptr_offset = ptr;
+    return 0;
+}
+
+// LEGACY: Bytecode interpreter retained for tests. The JIT path now executes
+// the compiled machine function directly (received via IPC and called at
+// EXECUTOR_CODE_ADDR + CODE_ENTRY_OFFSET).
+// The following pure_exec is retained for debugging but is no longer used by
+// the REPL/executor JIT execution path.
 void
 pure_exec(char *bf, size_t code_size) {
     LOG("Executing bytecode of size %zu\n", code_size);
@@ -502,9 +620,8 @@ umain(int argc, char **argv) {
         return;
     }
     executor_ctx.tape = (uint8_t *)BF_TAPE_ADDR;
-
-
-    // executor_ctx.tape = (uint8_t *) BF_TAPE_ADDR;
+    executor_ctx.ptr_offset = BF_TAPE_SIZE / 2; /* initialize data pointer to middle of tape */
+    executor_ctx.last_error = BF_SUCCESS;
 
     LOG("Allocated BF tape at %p\n", executor_ctx.tape);
 
@@ -523,7 +640,7 @@ umain(int argc, char **argv) {
     }
 
     /* Allocate exec code area as separate region so W^X can be applied safely */
-    if (sys_alloc_region(0, (void *)EXECUTOR_CODE_ADDR, MAX_BF_MSG_LEN, PROT_RW) < 0) {
+    if (sys_alloc_region(0, (void *)EXECUTOR_CODE_ADDR, MAX_BF_MSG_LEN, PROT_RW | PROT_X) < 0) {
         cprintf("bf_jit_interpreter: failed to allocate exec buffer(s) at %p\n", (void *)EXECUTOR_CODE_ADDR);
         return;
     }
@@ -559,6 +676,9 @@ umain(int argc, char **argv) {
             /* copy into exec area */
             memcpy((void *)EXECUTOR_CODE_ADDR, (void *)executor_ctx.code_buf, executor_ctx.code_size);
 
+            /* install helper pointer into code header so JIT code can call back */
+            *(void **)((uintptr_t)EXECUTOR_CODE_ADDR + CODE_HELPER_PTR_OFFSET) = (void *)bf_exec_helper;
+
             size_t code_page_bytes = ((executor_ctx.code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
             if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, EXECUTABLE) < 0) {
                 cprintf("bf_jit_interpreter: failed to make exec pages executable\n");
@@ -573,9 +693,12 @@ umain(int argc, char **argv) {
             LOG("Received IPC message from REPL %08x, size %zu bytes\n",
                 val, executor_ctx.code_size);
 
-            LOG("Executing JIT-compiled code (interpret_bf_bytecode)...\n");
-            int res = interpret_bf_bytecode();
-            LOG("JIT-compiled code execution complete\n");
+            LOG("Executing JIT-compiled code (calling entry point)...\n");
+            executor_ctx.last_error = BF_SUCCESS;
+            void (*entry_fn)(void) = (void (*)(void))((uintptr_t)EXECUTOR_CODE_ADDR + CODE_ENTRY_OFFSET);
+            entry_fn();
+            int res = (executor_ctx.last_error == BF_SUCCESS) ? BF_SUCCESS : executor_ctx.last_error;
+            LOG("JIT-compiled code execution complete, res=%d\n", res);
 
             /* revert exec pages to writable for next upload */
             if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, WRITABLE) < 0) {
@@ -621,6 +744,10 @@ umain(int argc, char **argv) {
 
         /* copy into exec area */
         memcpy((void *)EXECUTOR_CODE_ADDR, (void *)executor_ctx.code_buf, executor_ctx.code_size);
+
+        /* install helper pointer into code header */
+        *(void **)((uintptr_t)EXECUTOR_CODE_ADDR + CODE_HELPER_PTR_OFFSET) = (void *)bf_exec_helper;
+
         size_t code_page_bytes = ((executor_ctx.code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
 
         if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, EXECUTABLE) < 0) {
@@ -632,7 +759,12 @@ umain(int argc, char **argv) {
         uint8_t *prev_buf = executor_ctx.code_buf;
         executor_ctx.code_buf = (uint8_t *)EXECUTOR_CODE_ADDR;
 
-        interpret_bf_bytecode();
+        executor_ctx.last_error = BF_SUCCESS;
+        void (*entry_fn)(void) = (void (*)(void))((uintptr_t)EXECUTOR_CODE_ADDR + CODE_ENTRY_OFFSET);
+        entry_fn();
+        if (executor_ctx.last_error != BF_SUCCESS) {
+            cprintf("bf_jit_interpreter: JIT execution failed with %d\n", executor_ctx.last_error);
+        }
 
         /* revert exec pages to writable for future uses */
         if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, WRITABLE) < 0) {

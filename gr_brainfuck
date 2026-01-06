@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import re
+from gradelib import *
+
+# A single end-to-end run driven via the interactive shell (user_icode),
+# so we can exercise CLI flags (-bc/-e/-Otime/-p) and the REPL in one QEMU boot.
+#
+# We intentionally stop when a sentinel line is printed.
+
+r = Runner(save("jos.out"))
+
+
+def send_script_when_seen(regexp, script_bytes):
+    """Monitor: when QEMU prints a line matching regexp, write script_bytes to QEMU stdin."""
+
+    def setup(runner):
+        buf = bytearray()
+        sent = {"done": False}
+
+        def handle_output(output):
+            if sent["done"]:
+                return
+            buf.extend(output)
+            while b"\n" in buf:
+                line, buf[:] = buf.split(b"\n", 1)
+                text = line.decode("utf-8", "replace")
+                if re.match(regexp, text):
+                    try:
+                        runner.qemu.proc.stdin.write(script_bytes)
+                        runner.qemu.proc.stdin.flush()
+                    except Exception as e:
+                        raise AssertionError(f"failed to send input to QEMU stdin: {e}")
+                    sent["done"] = True
+                    return
+
+        runner.qemu.on_output.append(handle_output)
+
+    return setup
+
+
+# Use CR (\r) as Enter: JOS console paths typically treat CR as newline.
+SCRIPT = (
+    # Start REPL with debug enabled
+    "brainfuck -d\r"
+    # Switch output mode to HEX to get stable, readable output
+    "!fmt hex\r"
+    # Basic output test: +. => 01
+    "+.\r"
+    # Syntax error test: unmatched '[' should be reported by compiler
+    "[\r"
+    # Input test: read one byte and output it; provide 'Z'
+    ",.\r"
+    "Z\r"
+    # Quit REPL
+    "!quit\r"
+    # Compile-only: produce a bytecode file
+    "brainfuck -d -bc -o /out.bc /test.bf\r"
+    # Execute-only: run the produced bytecode
+    "brainfuck -d -e /out.bc\r"
+    # Optimizer path: ensure -Otime is accepted and runs
+    "brainfuck -d -Otime /optimizers_test.bf\r"
+    # Sentinel for the grader
+    "echo GRADE_DONE\r"
+).encode("utf-8")
+
+
+@test(0, "run brainfuck scenarios")
+def test_brainfuck_run():
+    # Boot into the shell (user_icode), then inject commands.
+    r.run_qemu(
+        send_script_when_seen(r".*init: running sh.*", SCRIPT),
+        stop_on_line(r"GRADE_DONE"),
+        target_base="run-icode",
+        make_args=["CONFIG_SNAPSHOT=y"],
+        timeout=180,
+    )
+
+
+@test(20, "REPL banner and prompt", parent=test_brainfuck_run)
+def test_repl_banner():
+    # REPL starts, prints banner, then we drive it via stdin.
+    if "Brainfuck JIT REPL [JOS Edition]" not in r.qemu.output:
+        raise AssertionError("Missing REPL banner")
+
+
+@test(20, "REPL: format switch + output", parent=test_brainfuck_run)
+def test_repl_fmt_and_output():
+    # '!fmt hex' prints a confirmation line.
+    r.match(r".*Output format set to HEX.*")
+    # '+.' should output 01 in hex mode.
+    if "01 " not in r.qemu.output:
+        raise AssertionError("Missing expected hex output '01 '")
+
+
+@test(20, "REPL: syntax error handled", parent=test_brainfuck_run)
+def test_repl_syntax_error():
+    # Unmatched '[' should lead to a compiler-side error line.
+    r.match(r".*\[COMPILATION ERROR\].*")
+
+
+@test(20, "executor: input opcode works", parent=test_brainfuck_run)
+def test_executor_input_echo():
+    # ',.' with input 'Z' should output 5A in hex mode.
+    if "5A " not in r.qemu.output and "5a " not in r.qemu.output:
+        raise AssertionError("Missing expected echoed input '5A '")
+
+
+@test(20, "CLI: -bc/-e/-Otime paths run", parent=test_brainfuck_run)
+def test_cli_modes():
+    # These are debug-mode logs from brainfuck.c; we check they happened.
+    r.match(
+        r".*Starting compile-only execution.*",
+        r".*Wrote .* bytes of bytecode to output file /out\.bc.*",
+        r".*Starting execute-only execution.*",
+    )
+    # -Otime should be reflected in argument dump.
+    r.match(r".*optimize_time=1.*")
+
+
+run_tests()

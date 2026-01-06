@@ -36,6 +36,11 @@ enum bf_exec_mode {
 #define BF_TAPE_ADDR   ((char *)(EXECUTOR_TEMP_ADDR + 3 * MAX_BF_MSG_LEN)) // Fixed address for BF tape in user space
 #define MAX_BF_MSG_LEN (128 * PAGE_SIZE)                                   // Max BF message size per IPC message
 
+/* JIT code header layout placed at the start of the exec region. */
+#define CODE_HEADER_SIZE  (8) /* one qword: pointer to bf_exec_helper */
+#define CODE_HELPER_PTR_OFFSET (0) /* offset inside header to helper pointer */
+#define CODE_ENTRY_OFFSET (CODE_HEADER_SIZE) /* start of generated code (after header) */
+
 /*
  * IPC message magic numbers
  * Used to identify message types in shared pages
@@ -164,6 +169,10 @@ typedef struct {
     uint8_t *tape;
     uint8_t *code_buf;
     size_t code_size;
+
+    /* offset of current data pointer from tape base - used by JIT helper */
+    size_t ptr_offset;
+    int last_error;
 
     int output_format;
     bool debug_mode;

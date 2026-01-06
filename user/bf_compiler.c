@@ -335,24 +335,33 @@ compile_bf_to_x86(void) {
     if (res < 0) return res;
     LOG("Compile: syntax ok, src_len=%zu\n", compiler_ctx.src_len);
 
-    Instruction *program = (Instruction *)compiler_ctx.code_buf;
-    size_t max_instr = MAX_BF_MSG_LEN / sizeof(Instruction);
-    size_t instr_count = 0;
-    compiler_ctx.loop_depth = 0; // reuse loop_stack for instruction indices
+    /* Emit machine code into compiler_ctx.code_buf.
+     * Layout:
+     *  [0:CODE_HEADER_SIZE)  header (qword helper ptr)
+     *  [CODE_ENTRY_OFFSET:.. ) generated code
+     */
 
-    if (compiler_ctx.optimize_time) {
-        LOG("Compile: -Otime enabled\n");
-    }
+    size_t cur = CODE_ENTRY_OFFSET; /* write position in bytes */
+    size_t max_bytes = MAX_BF_MSG_LEN;
+
+    /* helpers for emitting bytes */
+    #define EMIT_B(b) do { if (cur + 1 > max_bytes) return -BF_ERR_OVERFLOW; compiler_ctx.code_buf[cur++] = (uint8_t)(b); } while (0)
+    #define EMIT_BYTES(src, n) do { if (cur + (n) > max_bytes) return -BF_ERR_OVERFLOW; memcpy(&compiler_ctx.code_buf[cur], (src), (n)); cur += (n); } while (0)
+    #define EMIT_IMM32(v) do { uint32_t _v = (uint32_t)(v); EMIT_B(_v & 0xff); EMIT_B((_v>>8)&0xff); EMIT_B((_v>>16)&0xff); EMIT_B((_v>>24)&0xff); } while (0)
+
+    /* clear header */
+    for (size_t i = 0; i < CODE_HEADER_SIZE; i++) compiler_ctx.code_buf[i] = 0;
+
+    /* loop stack holds pairs {loop_body_start, je_disp_pos} */
+    size_t loop_body_stack[256];
+    size_t loop_je_pos_stack[256];
+    size_t loop_sp = 0;
 
     for (size_t i = 0; i < compiler_ctx.src_len;) {
         char c = compiler_ctx.source[i];
+        if (is_space(c)) { i++; continue; }
 
-        if (is_space(c)) {
-            i++;
-            continue;
-        }
-
-        // Optional loop-level optimizations (enabled by -Otime)
+        /* -Otime optimizations */
         if (compiler_ctx.optimize_time && c == '[') {
             size_t save = i;
             bool right = false;
@@ -360,133 +369,136 @@ compile_bf_to_x86(void) {
             int16_t delta = 0;
 
             if (try_opt_clear(compiler_ctx.source, compiler_ctx.src_len, &i)) {
-                res = emit_instruction(program, max_instr, &instr_count, OP_CLEAR, 0);
-                LOG("Emit: CLEAR instr=%zu\n", instr_count - 1);
-                if (res < 0) return res;
+                /* emit helper CLEAR */
+                EMIT_B(0xBF); EMIT_IMM32(OP_CLEAR); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                LOG("Emit(opt): CLEAR\n");
                 continue;
             }
 
             i = save;
             if (try_opt_seek(compiler_ctx.source, compiler_ctx.src_len, &i, &right)) {
-                res = emit_instruction(program, max_instr, &instr_count, right ? OP_SEEK_RIGHT : OP_SEEK_LEFT, 0);
-                LOG("Emit: SEEK_%s instr=%zu\n", right ? "RIGHT" : "LEFT", instr_count - 1);
-                if (res < 0) return res;
+                EMIT_B(0xBF); EMIT_IMM32(right ? OP_SEEK_RIGHT : OP_SEEK_LEFT);
+                EMIT_B(0xBE); EMIT_IMM32(0);
+                EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                LOG("Emit(opt): SEEK_%s\n", right ? "RIGHT" : "LEFT");
                 continue;
             }
 
             i = save;
             if (try_opt_move_add(compiler_ctx.source, compiler_ctx.src_len, &i, &off, &delta)) {
-                res = emit_instruction(program, max_instr, &instr_count, OP_MOVE_ADD, BF_PACK_MOVE_ADD(off, delta));
-                LOG("Emit: MOVE_ADD instr=%zu off=%d delta=%d\n", instr_count - 1, off, delta);
-                if (res < 0) return res;
+                uint32_t packed = (uint32_t)BF_PACK_MOVE_ADD(off, delta);
+                EMIT_B(0xBF); EMIT_IMM32(OP_MOVE_ADD);
+                EMIT_B(0xBE); EMIT_IMM32(packed);
+                EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                LOG("Emit(opt): MOVE_ADD off=%d delta=%d\n", off, delta);
                 continue;
             }
 
             i = save;
         }
 
-        // aggregate pointer shifts
+        /* aggregate runs */
         if (c == '>' || c == '<') {
             int delta = 0;
             while (i < compiler_ctx.src_len) {
                 char d = compiler_ctx.source[i];
-                if (d == '>') {
-                    delta++;
-                    i++;
-                } else if (d == '<') {
-                    delta--;
-                    i++;
-                } else if (is_space(d)) {
-                    i++;
-                } else
-                    break;
+                if (d == '>') { delta++; i++; }
+                else if (d == '<') { delta--; i++; }
+                else if (is_space(d)) { i++; }
+                else break;
             }
             if (delta > 0) {
-                res = emit_instruction(program, max_instr, &instr_count, OP_INC_PTR, delta);
+                /* mov edi, OP_INC_PTR */ EMIT_B(0xBF); EMIT_IMM32(OP_INC_PTR);
+                /* mov esi, delta */ EMIT_B(0xBE); EMIT_IMM32(delta);
+                /* call qword ptr [rip+disp32] */ EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             } else if (delta < 0) {
-                res = emit_instruction(program, max_instr, &instr_count, OP_DEC_PTR, -delta);
-            } else {
-                continue; // net zero shift
+                EMIT_B(0xBF); EMIT_IMM32(OP_DEC_PTR); EMIT_B(0xBE); EMIT_IMM32(-delta); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             }
-            LOG("Emit: PTR delta=%d instr=%zu\n", delta, instr_count - 1);
-            if (res < 0) return res;
             continue;
         }
 
-        // aggregate cell increments
         if (c == '+' || c == '-') {
             int delta = 0;
             while (i < compiler_ctx.src_len) {
                 char d = compiler_ctx.source[i];
-                if (d == '+') {
-                    delta++;
-                    i++;
-                } else if (d == '-') {
-                    delta--;
-                    i++;
-                } else if (is_space(d)) {
-                    i++;
-                } else
-                    break;
+                if (d == '+') { delta++; i++; }
+                else if (d == '-') { delta--; i++; }
+                else if (is_space(d)) { i++; }
+                else break;
             }
             if (delta > 0) {
-                res = emit_instruction(program, max_instr, &instr_count, OP_INC_CELL, delta);
+                EMIT_B(0xBF); EMIT_IMM32(OP_INC_CELL); EMIT_B(0xBE); EMIT_IMM32(delta); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             } else if (delta < 0) {
-                res = emit_instruction(program, max_instr, &instr_count, OP_DEC_CELL, -delta);
-            } else {
-                continue;
+                EMIT_B(0xBF); EMIT_IMM32(OP_DEC_CELL); EMIT_B(0xBE); EMIT_IMM32(-delta); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             }
-            LOG("Emit: CELL delta=%d instr=%zu\n", delta, instr_count - 1);
-            if (res < 0) return res;
             continue;
         }
 
         switch (c) {
         case '.':
-            res = emit_instruction(program, max_instr, &instr_count, OP_OUTPUT, 0);
-            LOG("Emit: OUTPUT instr=%zu\n", instr_count - 1);
-            i++;
-            break;
+            EMIT_B(0xBF); EMIT_IMM32(OP_OUTPUT); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            i++; break;
         case ',':
-            res = emit_instruction(program, max_instr, &instr_count, OP_INPUT, 0);
-            LOG("Emit: INPUT instr=%zu\n", instr_count - 1);
-            i++;
-            break;
+            EMIT_B(0xBF); EMIT_IMM32(OP_INPUT); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            i++; break;
         case '[': {
-            // record '[' position in stack, patch later
-            if (compiler_ctx.loop_depth >= (int)(sizeof(compiler_ctx.loop_stack) / sizeof(compiler_ctx.loop_stack[0]))) {
-                return -BF_ERR_SYNTAX;
-            }
-            int start_idx = (int)instr_count;
-            compiler_ctx.loop_stack[compiler_ctx.loop_depth++] = start_idx;
-            res = emit_instruction(program, max_instr, &instr_count, OP_LOOP_START, 0);
-            LOG("Emit: LOOP_START instr=%d depth=%d\n", start_idx, compiler_ctx.loop_depth);
-            i++;
-            break;
+            /* emit test helper */
+            EMIT_B(0xBF); EMIT_IMM32(OP_LOOP_START); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            /* test eax,eax */ EMIT_B(0x85); EMIT_B(0xC0);
+            /* je rel32 (placeholder) */ EMIT_B(0x0F); EMIT_B(0x84); size_t je_disp_pos = cur; EMIT_IMM32(0);
+            size_t loop_body_start = cur; /* code after the je instruction */
+            if (loop_sp >= sizeof(compiler_ctx.loop_stack) / sizeof(compiler_ctx.loop_stack[0])) return -BF_ERR_OVERFLOW;
+            loop_body_stack[loop_sp] = loop_body_start;
+            loop_je_pos_stack[loop_sp] = je_disp_pos;
+            loop_sp++;
+            i++; break;
         }
         case ']': {
-            if (compiler_ctx.loop_depth == 0) return -BF_ERR_SYNTAX; // unmatched ]
-            int start_idx = compiler_ctx.loop_stack[--compiler_ctx.loop_depth];
-            // set '[' arg to instruction after matching ']'
-            program[start_idx].arg = (int32_t)instr_count;
-            res = emit_instruction(program, max_instr, &instr_count, OP_LOOP_END, start_idx);
-            LOG("Emit: LOOP_END instr=%zu match=%d target=%d\n", instr_count - 1, start_idx, program[start_idx].arg);
-            i++;
-            break;
+            if (loop_sp == 0) return -BF_ERR_SYNTAX;
+            /* emit test helper */
+            EMIT_B(0xBF); EMIT_IMM32(OP_LOOP_START); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            /* test eax,eax */ EMIT_B(0x85); EMIT_B(0xC0);
+            /* jne rel32 back to loop_body_start */ EMIT_B(0x0F); EMIT_B(0x85);
+            size_t back_disp_pos = cur; EMIT_IMM32(0);
+
+            /* compute back displacement and patch */
+            size_t loop_body_start = loop_body_stack[loop_sp - 1];
+            int32_t back_disp = (int32_t)((int32_t)loop_body_start - (int32_t)(back_disp_pos + 4));
+            /* write back_disp little endian at back_disp_pos */
+            uint32_t _bd = (uint32_t)back_disp;
+            compiler_ctx.code_buf[back_disp_pos + 0] = _bd & 0xff;
+            compiler_ctx.code_buf[back_disp_pos + 1] = (_bd >> 8) & 0xff;
+            compiler_ctx.code_buf[back_disp_pos + 2] = (_bd >> 16) & 0xff;
+            compiler_ctx.code_buf[back_disp_pos + 3] = (_bd >> 24) & 0xff;
+
+            /* patch forward JE (at je_disp_pos) to point after the jne we just emitted */
+            size_t je_disp_pos = loop_je_pos_stack[loop_sp - 1];
+            size_t after_jne = cur; /* cur now points after the JNE immediate (we already emitted it) */
+            int32_t forward_disp = (int32_t)((int32_t)after_jne - (int32_t)(je_disp_pos + 4));
+            uint32_t _fd = (uint32_t)forward_disp;
+            compiler_ctx.code_buf[je_disp_pos + 0] = _fd & 0xff;
+            compiler_ctx.code_buf[je_disp_pos + 1] = (_fd >> 8) & 0xff;
+            compiler_ctx.code_buf[je_disp_pos + 2] = (_fd >> 16) & 0xff;
+            compiler_ctx.code_buf[je_disp_pos + 3] = (_fd >> 24) & 0xff;
+
+            loop_sp--;
+            i++; break;
         }
         default:
-            return -BF_ERR_SYNTAX;
+            i++; break;
         }
-
-        if (res < 0) return res;
     }
 
-    if (compiler_ctx.loop_depth != 0) return -BF_ERR_SYNTAX; // unclosed brackets
+    if (loop_sp != 0) return -BF_ERR_SYNTAX; /* unmatched '[' */
 
-    compiler_ctx.code_offset = instr_count * sizeof(Instruction);
-    LOG("Compile: done instr=%zu bytes=%zu\n", instr_count, compiler_ctx.code_offset);
+    /* epilogue: ret */
+    EMIT_B(0xC3);
+
+    compiler_ctx.code_offset = cur; /* total bytes including header */
+    LOG("Compile: emitted %zu bytes\n", compiler_ctx.code_offset);
     return 0;
 }
+
 
 /*
  * REPL COMMUNICATION
