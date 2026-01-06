@@ -27,7 +27,12 @@ ipc_recv(envid_t *from_env_store, void *pg, size_t *size, int *perm_store) {
         pg = (void *)MAX_USER_ADDRESS;
     }
 
-    int res = sys_ipc_recv(pg, PAGE_SIZE);
+    /*
+     * Request up to MAX_BF_MSG_LEN for IPC transfers so multi-page messages
+     * (up to 128 pages) are supported. Using a larger max preserves
+     * compatibility with callers that expect a single page.
+     */
+    int res = sys_ipc_recv(pg, 128 * PAGE_SIZE);
 
     if (res) {
         if (from_env_store) {

@@ -37,29 +37,24 @@ int WxorX(void *addr, size_t size, enum bf_exec_mode mode)
     if (size == 0 || addr == NULL) return -1;
 
     uintptr_t start = ROUNDDOWN((uintptr_t)addr, PAGE_SIZE);
-    size_t pages = ROUNDUP(size, PAGE_SIZE) / PAGE_SIZE;
+    size_t size_pg = ROUNDUP(size, PAGE_SIZE);
+    
+    void *pg = (void *)(start);
 
-    for (size_t i = 0; i < pages; i++) {
-        void *pg = (void *)(start + i * PAGE_SIZE);
+    int cur = get_prot(pg);
+    if (cur < 0) cur = PROT_R; 
 
-        int cur = get_prot(pg);
-        if (cur < 0) cur = PROT_R; 
+    int want;
 
-        int want;
-
-        if (mode == WRITABLE) {
-            want = (cur & ~PROT_X) | PROT_W | PROT_R;
-        } else if (mode == EXECUTABLE) {
-            want = (cur & ~PROT_W) | PROT_X | PROT_R;
-        } else {
-            want = cur;
-        }
-
-        if (sys_map_region(0, pg, 0, pg, PAGE_SIZE, want) < 0) {
-            cprintf("make_region_exec: failed to change perms for %p -> 0x%x\n", pg, want);
-            return -1;
-        }
+    if (mode == WRITABLE) {
+        want = (cur & ~PROT_X) | PROT_W | PROT_R;
+    } else if (mode == EXECUTABLE) {
+        want = (cur & ~PROT_W) | PROT_X | PROT_R;
+    } else {
+        want = cur;
     }
+
+    sys_map_region(0, pg, 0, pg, size_pg, want);
 
     return 0;
 }
@@ -69,7 +64,8 @@ int WxorX(void *addr, size_t size, enum bf_exec_mode mode)
  */
 void smart_getchar(void) {
     
-    memset(executor_ctx.input_buf, 0, executor_ctx.input_size);
+    /* Clear the whole input buffer to MAX_BF_MSG_LEN to avoid stale data */
+    memset(executor_ctx.input_buf, 0, MAX_BF_MSG_LEN);
     executor_ctx.input_size = 0;
     executor_ctx.input_pos = 0;
 
@@ -99,7 +95,7 @@ void smart_getchar(void) {
             continue;
         }
 
-        if (executor_ctx.input_size == PAGE_SIZE - 1) {
+        if (executor_ctx.input_size == MAX_BF_MSG_LEN - 1) {
             break;
         }
 
@@ -110,7 +106,7 @@ void smart_getchar(void) {
         cputchar(c); // for echo
     }
 
-}
+} 
 
 /*
  * OUTPUT FORMATTER
@@ -295,7 +291,9 @@ int interpret_bf_bytecode() {
                 break;
             case OP_INC_CELL:
                 LOG("interpret_bf_bytecode: INC_CELL by %d (before: %d)\n", inst.arg, *ptr);
-                *ptr += (uint8_t) inst.arg & 0xff;
+                int inc_delta = inst.arg & 0xff;
+                int inc_val = (int)*ptr + inc_delta;
+                *ptr = (uint8_t) inc_val;
                 LOG("interpret_bf_bytecode: INC_CELL after: %d\n", *ptr);
                 ip++;
                 LOG("interpret_bf_bytecode: ip incremented to %zu\n", ip);
@@ -303,7 +301,9 @@ int interpret_bf_bytecode() {
 
             case OP_DEC_CELL:
                 LOG("interpret_bf_bytecode: DEC_CELL by %d (before: %d)\n", inst.arg, *ptr);
-                *ptr -= (uint8_t) inst.arg & 0xff;
+                int dec_delta = inst.arg & 0xff;
+                int dec_val = (int)*ptr - dec_delta;
+                *ptr = (uint8_t) dec_val;
                 LOG("interpret_bf_bytecode: DEC_CELL after: %d\n", *ptr);
                 ip++;
                 break;
@@ -508,31 +508,37 @@ void umain(int argc, char **argv) {
     //static uint8_t local_tape[BF_TAPE_SIZE];
     //executor_ctx.tape = local_tape;
 
-    if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR), PAGE_SIZE, PROT_RW) < 0) {
-            cprintf("bf_jit_interpreter: failed to allocate receive buffer\n");
+    if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR), MAX_BF_MSG_LEN, PROT_RW) < 0) {
+            cprintf("bf_jit_interpreter: failed to allocate receive buffer(s)\n");
             return;
     }
 
-    if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
-            cprintf("bf_jit_interpreter: failed to allocate input buffer\n");
+    if (sys_alloc_region(0, (void *)(EXECUTOR_TEMP_ADDR + MAX_BF_MSG_LEN), MAX_BF_MSG_LEN, PROT_RW) < 0) {
+            cprintf("bf_jit_interpreter: failed to allocate input buffer(s)\n");
             return;
     }
 
-    executor_ctx.code_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR);
-    executor_ctx.input_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR + PAGE_SIZE);
+    /* Allocate exec code area as separate region so W^X can be applied safely */
+    if (sys_alloc_region(0, (void *)EXECUTOR_CODE_ADDR, MAX_BF_MSG_LEN, PROT_RW) < 0) {
+            cprintf("bf_jit_interpreter: failed to allocate exec buffer(s) at %p\n", (void *)EXECUTOR_CODE_ADDR);
+            return;
+    }
+
+    executor_ctx.code_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR); /* receive buffer */
+    executor_ctx.input_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR + MAX_BF_MSG_LEN);
+
+    LOG("Allocated receive buffer at %p and exec buffer at %p\n", (void *)(EXECUTOR_TEMP_ADDR), (void *)EXECUTOR_CODE_ADDR);
 
     if (executor_ctx.REPL_mode) {
         LOG("Entering REPL mode...\n");
 
         // REPL mode: wait for compiled code pages and execute them.
 
-        LOG("Allocated receive buffer at %p\n", (void *)(EXECUTOR_TEMP_ADDR));
-
         while (1) {
             int perm = 0;
             LOG("waiting for compiled code from REPL\n");
 
-            WxorX((void *)EXECUTOR_CODE_ADDR, PAGE_SIZE, WRITABLE);
+            WxorX((void *)EXECUTOR_CODE_ADDR, MAX_BF_MSG_LEN, WRITABLE);
 
             int32_t val = ipc_recv(&executor_ctx.repl_id, (void *) executor_ctx.code_buf, &executor_ctx.code_size, &perm);
             if (val < 0) {
@@ -540,16 +546,40 @@ void umain(int argc, char **argv) {
                 continue;
             }
 
-            WxorX((void *)EXECUTOR_CODE_ADDR, PAGE_SIZE, EXECUTABLE);
+            if (executor_ctx.code_size == 0 || executor_ctx.code_size > MAX_BF_MSG_LEN) {
+                cprintf("bf_jit_interpreter: invalid code size %zu\n", executor_ctx.code_size);
+                ipc_send(executor_ctx.repl_id, -BF_ERR_EXECUTION, NULL, 0, 0);
+                continue;
+            }
+
+            /* copy into exec area */
+            memcpy((void *)EXECUTOR_CODE_ADDR, (void *)executor_ctx.code_buf, executor_ctx.code_size);
+
+            size_t code_page_bytes = ((executor_ctx.code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+            if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, EXECUTABLE) < 0) {
+                cprintf("bf_jit_interpreter: failed to make exec pages executable\n");
+                ipc_send(executor_ctx.repl_id, -BF_ERR_EXECUTION, NULL, 0, 0);
+                continue;
+            }
+
+            /* execute from exec area */
+            uint8_t *prev_buf = executor_ctx.code_buf;
+            executor_ctx.code_buf = (uint8_t *)EXECUTOR_CODE_ADDR;
 
             LOG("Received IPC message from REPL %08x, size %zu bytes\n",
                 val, executor_ctx.code_size);
 
-            //LOG("Executing JIT-compiled code...\n");
-            //pure_exec((char *)executor_ctx.code_buf, executor_ctx.code_size);
             LOG("Executing JIT-compiled code (interpret_bf_bytecode)...\n");
             int res = interpret_bf_bytecode();
             LOG("JIT-compiled code execution complete\n");
+
+            /* revert exec pages to writable for next upload */
+            if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, WRITABLE) < 0) {
+                cprintf("bf_jit_interpreter: failed to revert exec pages to writable\n");
+            }
+
+            /* restore receive buffer pointer */
+            executor_ctx.code_buf = prev_buf;
 
             LOG("Sending execution completion signal back to REPL\n");
             ipc_send(executor_ctx.repl_id, res, NULL, 0, 0);
@@ -568,7 +598,7 @@ void umain(int argc, char **argv) {
         }
 
         // read bytecode to buffer
-        ssize_t bytes_read = read(fd, executor_ctx.code_buf, PAGE_SIZE);
+        ssize_t bytes_read = read(fd, executor_ctx.code_buf, MAX_BF_MSG_LEN);
         if (bytes_read < 0) {
             cprintf("Error: Cannot read from file %s\n", executor_ctx.input_file);
             close(fd);
@@ -581,9 +611,32 @@ void umain(int argc, char **argv) {
 
         LOG("Loaded bytecode from file, size: %zu bytes\n", executor_ctx.code_size);
 
-        WxorX((void *)EXECUTOR_CODE_ADDR, PAGE_SIZE, EXECUTABLE);
+        if (executor_ctx.code_size == 0 || executor_ctx.code_size > MAX_BF_MSG_LEN) {
+            cprintf("bf_jit_interpreter: invalid code size %zu\n", executor_ctx.code_size);
+            return;
+        }
+
+        /* copy into exec area */
+        memcpy((void *)EXECUTOR_CODE_ADDR, (void *)executor_ctx.code_buf, executor_ctx.code_size);
+        size_t code_page_bytes = ((executor_ctx.code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+
+        if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, EXECUTABLE) < 0) {
+            cprintf("bf_jit_interpreter: failed to make exec pages executable\n");
+            return;
+        }
+
+        /* execute from exec area */
+        uint8_t *prev_buf = executor_ctx.code_buf;
+        executor_ctx.code_buf = (uint8_t *)EXECUTOR_CODE_ADDR;
 
         interpret_bf_bytecode();
+
+        /* revert exec pages to writable for future uses */
+        if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, WRITABLE) < 0) {
+            cprintf("bf_jit_interpreter: failed to revert exec pages to writable\n");
+        }
+
+        executor_ctx.code_buf = prev_buf;
 
         LOG("Execution COMPLETE.\n");
     }

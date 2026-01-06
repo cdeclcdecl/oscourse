@@ -16,7 +16,8 @@ FSIMGTXTFILES :=	fs/newmotd \
 			fs/testshell.sh \
 			fs/test.bf \
 			fs/optimizers_test.bf \
-			fs/test_bytecode.bin
+			fs/test_bytecode.bin \
+			fs/test_reverse.bf
 
 
 USERAPPS :=		$(OBJDIR)/user/init \

@@ -30,9 +30,11 @@ enum bf_exec_mode {
 #define REPL_TEMP_ADDR ((char *)0xa00000)    // Address for temporarily mappings
 #define COMPILER_TEMP_ADDR ((char *) 0xb00000)
 #define EXECUTOR_TEMP_ADDR ((char *) 0xc00000)
-#define EXECUTOR_CODE_ADDR ((char *) EXECUTOR_TEMP_ADDR + 2 * PAGE_SIZE)   // Fixed address for JIT-compiled code in executor
-#define BF_TAPE_ADDR    ((char *) 0xd00000)        // Fixed address for BF tape in user space
-#define MAX_BF_MSG_LEN (PAGE_SIZE)  // Max BF message size per IPC message
+#define EXECUTOR_CODE_ADDR ((char *) (EXECUTOR_TEMP_ADDR + 2 * MAX_BF_MSG_LEN))   // Fixed address for JIT-compiled code in executor
+/* Place BF tape after the executor regions to avoid overlaps (was hardcoded to 0xd00000).
+ * Layout: EXECUTOR_TEMP_ADDR (recv/input buffers) | EXECUTOR_CODE_ADDR (exec pages) | BF_TAPE_ADDR */
+#define BF_TAPE_ADDR    ((char *) (EXECUTOR_TEMP_ADDR + 3 * MAX_BF_MSG_LEN))        // Fixed address for BF tape in user space
+#define MAX_BF_MSG_LEN (128 * PAGE_SIZE)  // Max BF message size per IPC message
 
 /*
  * IPC message magic numbers

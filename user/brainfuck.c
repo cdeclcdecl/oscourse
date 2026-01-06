@@ -87,12 +87,12 @@ void cleanup_resources(void) {
 
     if (repl_ctx.send_ipc_buf != NULL) {
         LOG("Freeing send IPC buffer\n");
-        sys_unmap_region(0, repl_ctx.send_ipc_buf, PAGE_SIZE);
+        sys_unmap_region(0, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
     }
 
     if (repl_ctx.receive_ipc_buf != NULL) {
         LOG("Freeing receive IPC buffer\n");
-        sys_unmap_region(0, repl_ctx.receive_ipc_buf, PAGE_SIZE);
+        sys_unmap_region(0, repl_ctx.receive_ipc_buf, MAX_BF_MSG_LEN);
     }
 
     LOG("Resource cleanup complete\n");
@@ -328,10 +328,11 @@ repl_loop(void) {
     // Interactive session management
     LOG("Starting interactive REPL loop...\n");
 
-    char input_buf[PAGE_SIZE];
     size_t buf_pose = 0;
     int c;
     int res = 0;
+
+    uint8_t *input_buf = (uint8_t *) repl_ctx.send_ipc_buf; /* read directly into IPC buffer */
 
     cprintf("Brainfuck JIT REPL [JOS Edition]\n");
     cprintf("Type '!help' for list of commands, Ctrl+D or '!quit' to exit\n\n");
@@ -339,13 +340,11 @@ repl_loop(void) {
     while(1) {
         cprintf(">>>> ");
 
-        while (((c = getchar()) & 0xff) != 0xf4 && (c & 0xff) != 0x0d && buf_pose < PAGE_SIZE - 1) {
-            //LOG("Read char: %c (0x%02x)\n", (char)c, (unsigned char)c);
-
+        while (((c = getchar()) & 0xff) != 0xf4 && (c & 0xff) != 0x0d && buf_pose < MAX_BF_MSG_LEN - 1) {
             if ((c & 0xff) == 0x08 || (c & 0xff) == 0x7f) { // Backspace or DEL
                 if (buf_pose > 0) {
                     buf_pose--;
-                    // Move cursor back, overwrite with space, move back again
+                    input_buf[buf_pose] = 0;
                     cprintf("\b \b");
                 }
                 continue;
@@ -357,10 +356,8 @@ repl_loop(void) {
                 break;
             }
 
-            if (buf_pose < PAGE_SIZE - 1) {
-                input_buf[buf_pose++] = (char)c;
-                cputchar(c);
-            }
+            input_buf[buf_pose++] = (char)c;
+            cputchar(c);
         }
 
         LOG("Exited reading loop");
@@ -381,14 +378,14 @@ repl_loop(void) {
 
         if (buf_pose > 0 && input_buf[0] == '!') {
             LOG("Processing REPL command: %s\n", input_buf);
-            if (strncmp(input_buf, "!quit", 5) == 0) {
+            if (strncmp((const char *) input_buf, "!quit", 5) == 0) {
                 LOG("Received !quit command, exiting REPL loop\n");
                 cprintf("Exiting REPL...\n");
                 break;
-            } else if (strncmp(input_buf, "!help", 5) == 0) {
+            } else if (strncmp((const char *) input_buf, "!help", 5) == 0) {
                 cprintf("%s", repl_help_msg);
-            } else if (strncmp(input_buf, "!fmt ", 5) == 0) {
-                char *fmt = input_buf + 5;
+            } else if (strncmp((const char *) input_buf, "!fmt ", 5) == 0) {
+                char *fmt = ((char *) input_buf) + 5;
                 if (strncmp(fmt, "ascii", 5) == 0) {
                     repl_ctx.output_format = BF_OUTPUT_ASCII;
                     cprintf("Output format set to ASCII\n");
@@ -407,7 +404,7 @@ repl_loop(void) {
                 if (repl_ctx.executor_id == 0) {
                     err_exit();
                 }
-            } else if (strncmp(input_buf, "!reset", 6) == 0) {
+            } else if (strncmp((const char *) input_buf, "!reset", 6) == 0) {
                 cprintf("Resetting REPL state...\n");
                 sys_env_destroy(repl_ctx.executor_id);
                 repl_ctx.executor_id = spawn_executor();
@@ -430,11 +427,8 @@ repl_loop(void) {
         LOG("Input code:\n%s\n", input_buf);
 
         int perm = 0;
-        LOG("Copying memory into sending buf\n");
-        memcpy((void *) repl_ctx.send_ipc_buf, (void *) input_buf, buf_pose);
+        /* Data is already in repl_ctx.send_ipc_buf. */
         repl_ctx.send_ipc_size = buf_pose;
-        LOG("Copied memory from buf\n");
-        /* Send only the meaningful bytes (no message headers) */
         send_to_compiler();
 
         res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
@@ -480,7 +474,7 @@ void file_based_usage(void) {
     }
     LOG("Opened input file descriptor %d\n", repl_ctx.fd);
 
-    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
     if (n < 0) {
         cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
         err_exit();
@@ -491,12 +485,11 @@ void file_based_usage(void) {
 
     send_to_compiler();
     int perm = 0;
-    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
     if (res != BF_SUCCESS) {
         err_exit();
     }
-    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.send_ipc_size);
-
+    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.receive_ipc_size);
     memcpy((void *) repl_ctx.send_ipc_buf, (void *) repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
     repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
     send_to_executor();
@@ -525,7 +518,7 @@ void complile_only_usage(void) {
      // send filename to compiler via IPC
     
     LOG("Reading Brainfuck source from file %s...\n", repl_ctx.input_file);
-    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
     if (n < 0) {
         cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
         err_exit();
@@ -575,7 +568,7 @@ void execute_only_usage(void) {
     }
     LOG("Opened input file descriptor %d\n", repl_ctx.fd);
 
-    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, PAGE_SIZE);
+    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
     if (n < 0) {
         cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
         err_exit();
@@ -620,8 +613,8 @@ umain(int argc, char **argv) {
             repl_ctx.output_format,
             repl_ctx.input_file ? repl_ctx.input_file : "NULL");
 
-    // Allocate IPC buffers
-    res = sys_alloc_region(0, (void *)REPL_TEMP_ADDR, PAGE_SIZE, PROT_RW);
+    // Allocate IPC buffers (expand to MAX_BF_MSG_LEN to support multi-page IPC)
+    res = sys_alloc_region(0, (void *)REPL_TEMP_ADDR, MAX_BF_MSG_LEN, PROT_RW);
     if (res < 0) {
         cprintf("Error: Failed to allocate IPC buffer for compiler\n");
         err_exit();
@@ -629,13 +622,13 @@ umain(int argc, char **argv) {
 
     repl_ctx.send_ipc_buf = (void *)REPL_TEMP_ADDR;
 
-    res = sys_alloc_region(0, (void *)(REPL_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW);
+    res = sys_alloc_region(0, (void *)(REPL_TEMP_ADDR + MAX_BF_MSG_LEN), MAX_BF_MSG_LEN, PROT_RW);
     if (res < 0) {
         cprintf("Error: Failed to allocate IPC buffer for executor\n");
         err_exit();
     }
 
-    repl_ctx.receive_ipc_buf = (void *) (REPL_TEMP_ADDR + PAGE_SIZE);
+    repl_ctx.receive_ipc_buf = (void *) (REPL_TEMP_ADDR + MAX_BF_MSG_LEN);
 
     // if user wants to only execute precompiled bytecode
     if (repl_ctx.execute_only) {

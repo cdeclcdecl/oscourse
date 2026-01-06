@@ -313,7 +313,7 @@ static int compile_bf_to_x86(void) {
     LOG("Compile: syntax ok, src_len=%zu\n", compiler_ctx.src_len);
 
     Instruction *program = (Instruction *) compiler_ctx.code_buf;
-    size_t max_instr = PAGE_SIZE / sizeof(Instruction);
+    size_t max_instr = MAX_BF_MSG_LEN / sizeof(Instruction);
     size_t instr_count = 0;
     compiler_ctx.loop_depth = 0; // reuse loop_stack for instruction indices
 
@@ -475,9 +475,9 @@ void umain(int argc, char **argv) {
     LOG("bf_compiler parsed arguments\n");
 
 
-    // Allocate a scratch page for generated output.
-    if (sys_alloc_region(0, (void *)COMPILER_TEMP_ADDR, PAGE_SIZE, PROT_RW) < 0) {
-        cprintf("bf_compiler: failed to allocate code buffer page\n");
+    // Allocate a scratch buffer for generated output (expanded)
+    if (sys_alloc_region(0, (void *)COMPILER_TEMP_ADDR, MAX_BF_MSG_LEN, PROT_RW) < 0) {
+        cprintf("bf_compiler: failed to allocate code buffer page(s)\n");
         return;
     }
     compiler_ctx.code_buf = (uint8_t *)COMPILER_TEMP_ADDR;
@@ -490,14 +490,14 @@ void umain(int argc, char **argv) {
         LOG("Entering REPL mode...\n");
 
         // REPL mode: wait for BF source pages and respond with compiled output.
-        if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
-            cprintf("bf_compiler: failed to allocate receive buffer\n");
+        if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN), MAX_BF_MSG_LEN, PROT_RW) < 0) {
+            cprintf("bf_compiler: failed to allocate receive buffer(s)\n");
             return;
         }
 
-        compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
+        compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN);
 
-        LOG("Allocated receive buffer at %p\n", (void *)(COMPILER_TEMP_ADDR + PAGE_SIZE));
+        LOG("Allocated receive buffer at %p\n", (void *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN));
 
         while (1) {
             int perm = 0;
@@ -520,7 +520,7 @@ void umain(int argc, char **argv) {
                 continue;
             }
 
-            compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
+            compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN);
 
             int res = compile_bf_to_x86();
             if (res != BF_SUCCESS) {
@@ -543,11 +543,11 @@ void umain(int argc, char **argv) {
     LOG("Entering file-based compilation mode...\n");
 
     // standalone compilation: read BF, compile to Instruction[], write to file
-    if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + PAGE_SIZE), PAGE_SIZE, PROT_RW) < 0) {
-        cprintf("bf_compiler: failed to allocate source buffer page\n");
+    if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN), MAX_BF_MSG_LEN, PROT_RW) < 0) {
+        cprintf("bf_compiler: failed to allocate source buffer(s)\n");
         return;
     }
-    compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + PAGE_SIZE);
+    compiler_ctx.source = (const char *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN);
 
     int fd_in = open(compiler_ctx.input_file, O_RDONLY);
     if (fd_in < 0) {
@@ -555,7 +555,7 @@ void umain(int argc, char **argv) {
         return;
     }
 
-    ssize_t n = read(fd_in, (void *)compiler_ctx.source, PAGE_SIZE);
+    ssize_t n = read(fd_in, (void *)compiler_ctx.source, MAX_BF_MSG_LEN);
     if (n < 0) {
         cprintf("failed to read input file %s\n", compiler_ctx.input_file);
         close(fd_in);
