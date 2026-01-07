@@ -556,4 +556,7 @@ umain(int argc, char **argv) {
             return;
         }
 #endif
+    }
+
+    LOG("bf_jit_interpreter exiting...\n");
 }
