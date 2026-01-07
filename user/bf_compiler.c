@@ -8,7 +8,7 @@
  *    bf_compiler [options]
  *    --REPL                       : (Not shown in help message) REPL mode (waits for IPC)
  *    -h (--help)                  : Show this help message\n"
- *    -o (--output) <file>         : Specify output file for bytecode\n"
+ *    -o (--output) <file>         : Specify output file for compiled code\n"
  *    -Otime (--optimize-time)     : Enable time optimizations\n"
  *    -d (--debug)                 : Enable debug mode\n"
  *    <input_file>                 : Input file (optional)\n";
@@ -54,7 +54,7 @@ bf_compiler_context_t compiler_ctx = {
 char usage_msg[] =
         "Usage: bf_compiler [options]\n"
         "  -h (--help)                  : Show this help message\n"
-        "  -o (--output) <file>         : Specify output file for bytecode\n"
+        "  -o (--output) <file>         : Specify output file for compiled code\n"
         "  -Otime (--optimize-time)     : Enable time optimizations\n"
         "  -d (--debug)                 : Enable debug mode\n"
         "  <input_file>                 : Input file (optional)\n";
@@ -133,7 +133,7 @@ parse_arguments(int argc, char **argv) {
     }
 
     if (!compiler_ctx.REPL_mode && compiler_ctx.output_file == NULL) {
-        compiler_ctx.output_file = "out.bc";
+        compiler_ctx.output_file = "out.bin";
     }
 
     // Debug output
@@ -178,18 +178,6 @@ validate_syntax(void) {
     }
 
     if (compiler_ctx.loop_depth != 0) return -BF_ERR_SYNTAX;
-    return 0;
-}
-
-/*
- * Emit one instruction with bounds checking
- */
-static int
-emit_instruction(Instruction *program, size_t max_instr, size_t *count, Opcode op, int32_t arg) {
-    if (*count >= max_instr) return -BF_ERR_OVERFLOW;
-    program[*count].opcode = op;
-    program[*count].arg = arg;
-    (*count)++;
     return 0;
 }
 
@@ -325,10 +313,10 @@ try_opt_move_add(const char *s, size_t len, size_t *i, int16_t *off, int16_t *de
 }
 
 /*
- * REAL BF->BYTECODE COMPILATION
+ * REAL BF->x86 COMPILATION
  * - validates brackets (validate_syntax)
  * - aggregates runs of > < + -
- * - builds Instruction array with jump patching
+ * - generates x86 machine code with jump patching
  */
 static int
 compile_bf_to_x86(void) {
@@ -526,7 +514,7 @@ compile_bf_to_x86(void) {
 
 /*
  * REPL COMMUNICATION
- * Sends compiled page back to the REPL/executor owner via IPC.
+ * Sends compiled code page back to the REPL/executor owner via IPC.
  */
 void
 send_to_repl(int res) {
@@ -605,10 +593,10 @@ umain(int argc, char **argv) {
                 continue;
             }
 
-            LOG("sending bytecode to REPL\n");
+            LOG("sending machine code to REPL\n");
             send_to_repl(res);
 
-            LOG("Compiled and sent bytecode of size %zu to REPL %08x\n", compiler_ctx.code_offset, compiler_ctx.repl_id);
+            LOG("Compiled and sent machine code of size %zu to REPL %08x\n", compiler_ctx.code_offset, compiler_ctx.repl_id);
         }
 
         // unreachable
@@ -617,7 +605,7 @@ umain(int argc, char **argv) {
     // File-based mode: read input file, compile, write output file.
     LOG("Entering file-based compilation mode...\n");
 
-    // standalone compilation: read BF, compile to Instruction[], write to file
+    // standalone compilation: read BF, compile to x86 machine code, write to file
     if (sys_alloc_region(0, (void *)(COMPILER_TEMP_ADDR + MAX_BF_MSG_LEN), MAX_BF_MSG_LEN, PROT_RW) < 0) {
         cprintf("bf_compiler: failed to allocate source buffer(s)\n");
         return;
@@ -662,7 +650,7 @@ umain(int argc, char **argv) {
 
     ssize_t written = write(fd_out, compiler_ctx.code_buf, compiler_ctx.code_offset);
     if (written < 0 || (size_t)written != compiler_ctx.code_offset) {
-        cprintf("failed to write bytecode to %s\n", compiler_ctx.output_file);
+        cprintf("failed to write compiled code to %s\n", compiler_ctx.output_file);
         close(fd_out);
         return;
     }

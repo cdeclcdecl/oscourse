@@ -46,7 +46,7 @@ enum bf_exec_mode {
  * Used to identify message types in shared pages
  */
 #define BF_MAGIC_SOURCE 0xBFC0DE01 // BF source code from REPL to compiler
-#define BF_MAGIC_EXEC   0xBFC0DE02 // Executable bytecode from compiler to REPL or from REPL to executor
+#define BF_MAGIC_EXEC   0xBFC0DE02 // Executable machine code from compiler to REPL or from REPL to executor
 #define BF_MAGIC_RESULT 0xBFC0DE03 // Execution result from executor to REPL
 
 enum {
@@ -125,20 +125,15 @@ typedef struct {
  *   compiler_id - Environment ID of spawned compiler process
  *   executor_id - Environment ID of spawned executor process
  *   interactive - Flag for interactive mode (REPL loop)
- *   compile_only - Flag for -bc mode (stop after compilation)
- *   execute_only - Flag for -e mode (skip compilation)
  *   optimize_time - Flag for -Otime optimizations
  *   output_format - Output format (BF_OUTPUT_ASCII/HEX/DEC)
- *   input_file - Filename for -f mode (NULL if stdin)
- *   bytecode_file - Filename for -e or -bc mode
+ *   input_file - Filename for file-based mode (NULL if stdin)
  */
 typedef struct {
     envid_t compiler_id;
     envid_t executor_id;
 
     bool interactive;
-    bool compile_only;
-    bool execute_only;
     bool optimize_time;
     bool debug_mode;
 
@@ -158,12 +153,12 @@ typedef struct {
  *
  * Fields:
  *   tape - Pointer to BF memory tape (30KB at BF_TAPE_ADDR)
- *   code_buf - Buffer holding JIT-compiled bytecode
- *   code_size - Size of bytecode in bytes
+ *   code_buf - Buffer holding JIT-compiled machine code
+ *   code_size - Size of code in bytes
  *   output_format - Output format (BF_OUTPUT_ASCII/HEX/DEC)
  *   debug_mode - Flag for enabling debug logging (-d)
  *   REPL_mode - Flag indicating if running in REPL mode
- *   input_file - Optional input file name for bytecode
+ *   input_file - Optional input file name for compiled code
  */
 typedef struct {
     uint8_t *tape;
@@ -186,40 +181,6 @@ typedef struct {
 } bf_executor_ctx_t;
 
 
-/*
- * Responcible: deadlamer
- * OPCODES for brainfuck
- * Supports JIT. Supports optimized
- * opcodes (in future). Easy for debugging and testing. (alignment??)
- *
- */
-typedef struct {
-    uint8_t opcode;
-    int32_t arg;
-} Instruction;
-
-typedef enum {
-    // OPCODES for base commands Brainfuck
-    OP_NOP = 0,    // No operation (useful for alignment or JIT)
-    OP_INC_PTR,    // > : increase data pointer
-    OP_DEC_PTR,    // < : decrease data pointer
-    OP_INC_CELL,   // + : increase value of current cell
-    OP_DEC_CELL,   // - : decrease value of current cell
-    OP_OUTPUT,     // . : show value of current cell (arg not used)
-    OP_INPUT,      // , : put value to current cell (arg not used)
-    OP_LOOP_START, // [ : start cycle (next step if cell == 0)
-    OP_LOOP_END,   // ] : end cycle (next step if cell != 0)
-
-    // Optimized opcodes
-    OP_CLEAR,      // [-] or [+] : set current cell to 0
-    OP_SEEK_RIGHT, // [>] : move pointer right until current cell becomes 0
-    OP_SEEK_LEFT,  // [<] : move pointer left until current cell becomes 0
-    OP_MOVE_ADD,   // [->(+/-k)<] : move current cell value to offset cell, then clear current
-
-    // --- Plug for number of base OPCODES ---
-    OP_COUNT // label for counting
-} Opcode;
-
 // OP_MOVE_ADD packing helpers
 // arg packs two signed 16-bit values:
 //   low 16 bits  = offset (relative cell index)
@@ -227,23 +188,26 @@ typedef enum {
 #define BF_PACK_MOVE_ADD(offset, delta) ((int32_t)((((uint32_t)((uint16_t)(offset))) & 0xFFFFu) | (((uint32_t)((uint16_t)(delta))) << 16)))
 #define BF_UNPACK_MOVE_ADD_OFFSET(arg)  ((int16_t)((uint32_t)(arg) & 0xFFFFu))
 #define BF_UNPACK_MOVE_ADD_DELTA(arg)   ((int16_t)(((uint32_t)(arg) >> 16) & 0xFFFFu))
-
-
 /*
- * example of simple bf program using opcodes:
- *
- * |CODE_STARTS HERE|>++++++++++[<->+].|CODE_ENDS_HERE|
- *
- * Instruction program[] = {
- *   {OP_INC_PTR, 1},      // >
- *   {OP_INC_CELL, 10},    // ++++++++
- *   {OP_LOOP_START, 8},   // [ -> jump to ] if 0
- *   {OP_DEC_PTR, 1},      // <
- *   {OP_DEC_CELL, 1},     // -
- *   {OP_INC_PTR, 1},      // >
- *   {OP_INC_CELL, 1},     // +
- *   {OP_LOOP_END, 2},     // ] -> jump to [ if not 0
- *   {OP_OUTPUT, 0},       // .
- *   {OP_NOP, 0}
- * };
+ * JIT Helper Opcodes
+ * These are used by the JIT-compiled code to call back into bf_exec_helper
+ * They are NOT bytecode instructions - they are passed as arguments to the helper function
  */
+typedef enum {
+    OP_NOP = 0,    // No operation
+    OP_INC_PTR,    // > : increase data pointer
+    OP_DEC_PTR,    // < : decrease data pointer
+    OP_INC_CELL,   // + : increase value of current cell
+    OP_DEC_CELL,   // - : decrease value of current cell
+    OP_OUTPUT,     // . : show value of current cell
+    OP_INPUT,      // , : put value to current cell
+    OP_LOOP_START, // [ : test for loop start
+
+    // Optimized opcodes
+    OP_CLEAR,      // [-] or [+] : set current cell to 0
+    OP_SEEK_RIGHT, // [>] : move pointer right until current cell becomes 0
+    OP_SEEK_LEFT,  // [<] : move pointer left until current cell becomes 0
+    OP_MOVE_ADD,   // [->(+/-k)<] : move current cell value to offset cell, then clear current
+
+    OP_COUNT // label for counting
+} Opcode;

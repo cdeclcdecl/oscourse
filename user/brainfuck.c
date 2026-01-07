@@ -7,8 +7,6 @@
  * CLI USAGE:
  *   brainfuck                                  : Interactive REPL mode
  *   brainfuck <file.bf>                        : Compile and execute BF source file
- *   brainfuck -bc (--bytecode) <file.bf>       : Compile only (output bytecode to stdout)
- *   brainfuck -e (--exec) <file.bc>            : Execute precompiled bytecode file
  *   brainfuck -Otime                           : Enable time optimizations
  *   brainfuck -p (--print) ascii|hex|dec       : Set output format for execution
  *   brainfuck -h (--help)                      : Show help message
@@ -22,8 +20,6 @@ bf_repl_ctx_t repl_ctx = {
         .compiler_id = 0,
         .executor_id = 0,
         .interactive = true,
-        .compile_only = false,
-        .execute_only = false,
         .optimize_time = false,
         .output_format = BF_OUTPUT_ASCII,
         .input_file = NULL,
@@ -37,9 +33,6 @@ bf_repl_ctx_t repl_ctx = {
 
 char usage_msg[] =
         "Usage: brainfuck [options]\n"
-        "  -bc (--bytecode)         : Compile only (no execution)\n"
-        "  -o (--output) <file>     : Specify output file for bytecode (only for -bc option) (default: out.bc)\n"
-        "  -e (--exec)              : Execute precompiled bytecode\n"
         "  -Otime (--optimize)      : Enable time optimizations\n"
         "  -p (--print) <format>    : Set output format (ascii/hex/dec)\n"
         "  -h (--help)              : Show this help message\n"
@@ -125,12 +118,6 @@ parse_repl_arguments(int argc, char **argv) {
         if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
             // processing debug flag
             repl_ctx.debug_mode = true;
-        } else if (strcmp(argv[i], "-bc") == 0 || strcmp(argv[i], "--bytecode") == 0) {
-            // processing bc flag
-            repl_ctx.compile_only = true;
-        } else if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--exec") == 0) {
-            // processing e flag
-            repl_ctx.execute_only = true;
         } else if (strcmp(argv[i], "-Otime") == 0 || strcmp(argv[i], "--optimize") == 0) {
             // processing Otime flag
             repl_ctx.optimize_time = true;
@@ -157,14 +144,6 @@ parse_repl_arguments(int argc, char **argv) {
             // printing help message
             cprintf("%s", usage_msg);
             exit();
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
-            // processing output file
-            if (i + 1 >= argc) {
-                cprintf("Error: -o requires a file argument\n\n");
-                return -1;
-            }
-            i++;
-            repl_ctx.output_file = argv[i];
         } else {
             // processing input file
             if (repl_ctx.input_file == NULL) {
@@ -177,34 +156,8 @@ parse_repl_arguments(int argc, char **argv) {
         }
     }
 
-    // check that -e and -bc are not combined
-    if (repl_ctx.compile_only && repl_ctx.execute_only) {
-        cprintf("Error: -bc and -e options cannot be combined\n\n");
-        return -1;
-    }
-
-    // check that -bc and -e have input file
-    if (repl_ctx.compile_only && repl_ctx.input_file == NULL) {
-        cprintf("Error: -bc requires an input file\n\n");
-        return -1;
-    }
-
-    if (repl_ctx.execute_only && repl_ctx.input_file == NULL) {
-        cprintf("Error: -e requires an input file\n\n");
-        return -1;
-    }
-
-    if (repl_ctx.compile_only && repl_ctx.output_file == NULL) {
-        repl_ctx.output_file = "out.bc";
-    }
-
-    if (!repl_ctx.compile_only && repl_ctx.output_file != NULL) {
-        cprintf("Error: -o option can only be used with -bc\n\n");
-        return -1;
-    }
-
     // set interactive mode depending on flags
-    if (!repl_ctx.execute_only && repl_ctx.input_file == NULL && !repl_ctx.compile_only) {
+    if (repl_ctx.input_file == NULL) {
         repl_ctx.interactive = true;
     } else {
         repl_ctx.interactive = false;
@@ -306,7 +259,7 @@ send_to_compiler(void) {
 
 /*
  * EXECUTOR IPC COMMUNICATION
- * Sends page with bytecode to executor process via IPC.
+ * Sends page with compiled machine code to executor process via IPC.
  *
  */
 void
@@ -323,8 +276,8 @@ send_to_executor(void) {
  *   1. Read user input line-by-line
  *   2. Process special commands (!help, !fmt, !reset, !quit)
  *   3. Send Brainfuck code to compiler via IPC
- *   4. Receive compiled bytecode from compiler via IPC
- *   5. Send bytecode to executor via IPC
+ *   4. Receive compiled machine code from compiler via IPC
+ *   5. Send machine code to executor via IPC
  *   6. Receive execution output from executor via IPC
  *   7. Format and display output according to user settings
  *   8. repeat until !quit or EOF
@@ -443,13 +396,13 @@ repl_loop(void) {
         }
         LOG("Received message from compiler, ");
 
-        LOG("Compiled bytecode size: %zu bytes\n", repl_ctx.receive_ipc_size);
+        LOG("Compiled machine code size: %zu bytes\n", repl_ctx.receive_ipc_size);
         // send to executor
 
         memcpy((void *)repl_ctx.send_ipc_buf, (void *)repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
         repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
         send_to_executor();
-        LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
+        LOG("Sent machine code to executor %08x\n", repl_ctx.executor_id);
         res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
         if (res != BF_SUCCESS) {
             cprintf("Resetting REPL state...\n");
@@ -499,11 +452,11 @@ file_based_usage(void) {
     if (res != BF_SUCCESS) {
         err_exit();
     }
-    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.receive_ipc_size);
+    LOG("Received compiled machine code of size %zu bytes from compiler\n", repl_ctx.receive_ipc_size);
     memcpy((void *)repl_ctx.send_ipc_buf, (void *)repl_ctx.receive_ipc_buf, repl_ctx.receive_ipc_size);
     repl_ctx.send_ipc_size = repl_ctx.receive_ipc_size;
     send_to_executor();
-    LOG("Sent bytecode to executor %08x\n", repl_ctx.executor_id);
+    LOG("Sent machine code to executor %08x\n", repl_ctx.executor_id);
     res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
     if (res != BF_SUCCESS) {
         err_exit();
@@ -511,99 +464,6 @@ file_based_usage(void) {
     LOG("Received execution completion from executor\n");
 
     LOG("Exiting file-based execution...\n");
-    return;
-}
-
-void
-complile_only_usage(void) {
-    int res = 0;
-    LOG("Starting compile-only execution...\n");
-    LOG("Input file: %s\n", repl_ctx.input_file);
-    repl_ctx.fd = open(repl_ctx.input_file, O_RDONLY);
-    if (repl_ctx.fd < 0) {
-        cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
-        err_exit();
-    }
-    LOG("Opened input file descriptor %d\n", repl_ctx.fd);
-
-    // send filename to compiler via IPC
-
-    LOG("Reading Brainfuck source from file %s...\n", repl_ctx.input_file);
-    int n = 0;
-    int cur = 0;
-    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, PAGE_SIZE)) > 0) {
-        n += cur;
-    }
-
-    repl_ctx.send_ipc_size = n;
-    LOG("Read %d bytes from input file\n", n);
-
-    send_to_compiler();
-
-    int perm = 0;
-    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
-    if (res != BF_SUCCESS) {
-        err_exit();
-    }
-    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.receive_ipc_size);
-    // write bytecode to output file
-    int fd_out = open(repl_ctx.output_file, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd_out < 0) {
-        cprintf("Error: Failed to open output file %s\n", repl_ctx.output_file);
-        err_exit();
-    }
-    LOG("Opened output file descriptor %d\n", fd_out);
-
-    n = 0;
-    cur = 0;
-    while ((cur = write(fd_out, repl_ctx.receive_ipc_buf + n, repl_ctx.receive_ipc_size - n)) > 0) {
-        n += cur;
-        if (n >= MAX_BF_MSG_LEN) {
-            cprintf("Error: Input file %s too large (max %lld bytes)\n", repl_ctx.input_file, MAX_BF_MSG_LEN);
-            err_exit();
-        }
-    }
-
-    LOG("Wrote %zu bytes of bytecode to output file %s\n", repl_ctx.send_ipc_size, repl_ctx.output_file);
-
-    close(fd_out);
-    LOG("Closed output file descriptor\n");
-    return;
-}
-
-void
-execute_only_usage(void) {
-    int res;
-    LOG("Starting execute-only execution...\n");
-
-    repl_ctx.fd = open(repl_ctx.input_file, O_RDONLY);
-    if (repl_ctx.fd < 0) {
-        cprintf("Error: Failed to open input file %s\n", repl_ctx.input_file);
-        err_exit();
-    }
-    LOG("Opened input file descriptor %d\n", repl_ctx.fd);
-
-    int n = 0;
-    int cur = 0;
-    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, PAGE_SIZE)) > 0) {
-        n += cur;
-        if (n >= MAX_BF_MSG_LEN) {
-            cprintf("Error: Input file %s too large (max %lld bytes)\n", repl_ctx.input_file, MAX_BF_MSG_LEN);
-            err_exit();
-        }
-    }
-
-
-    repl_ctx.send_ipc_size = n;
-    LOG("Read %d bytes from input file\n", n);
-    send_to_executor();
-    int perm = 0;
-    res = ipc_recv(&repl_ctx.executor_id, NULL, NULL, &perm);
-    if (res != BF_SUCCESS) {
-        err_exit();
-    }
-    LOG("Received execution completion from executor\n");
-
     return;
 }
 
@@ -625,10 +485,8 @@ umain(int argc, char **argv) {
     }
 
     LOG("Successfully parsed arguments.\n");
-    LOG("\tinteractive=%d\n\tcompile_only=%d\n\texecute_only=%d\n\toptimize_time=%d\n\toutput_format=%d\n\tinput_file=%s\n",
+    LOG("\tinteractive=%d\n\toptimize_time=%d\n\toutput_format=%d\n\tinput_file=%s\n",
         repl_ctx.interactive,
-        repl_ctx.compile_only,
-        repl_ctx.execute_only,
         repl_ctx.optimize_time,
         repl_ctx.output_format,
         repl_ctx.input_file ? repl_ctx.input_file : "NULL");
@@ -650,32 +508,6 @@ umain(int argc, char **argv) {
 
     repl_ctx.receive_ipc_buf = (void *)(REPL_TEMP_ADDR + MAX_BF_MSG_LEN);
 
-    // if user wants to only execute precompiled bytecode
-    if (repl_ctx.execute_only) {
-
-        LOG("Following execute-only mode...\n");
-
-        repl_ctx.executor_id = spawn_executor();
-        if (repl_ctx.executor_id == 0) {
-            err_exit();
-        }
-
-        execute_only_usage();
-    }
-
-    // if user wants to only compile Brainfuck source code
-    if (repl_ctx.compile_only) {
-
-        LOG("Following compile-only mode...\n");
-
-        repl_ctx.compiler_id = spawn_compiler();
-        if (repl_ctx.compiler_id == 0) {
-            err_exit();
-        }
-
-        complile_only_usage();
-    }
-
     // if user wants interactive REPL session
     if (repl_ctx.interactive) {
 
@@ -695,7 +527,7 @@ umain(int argc, char **argv) {
     }
 
     // if user wants file-based execution
-    if (repl_ctx.input_file != NULL && !repl_ctx.compile_only && !repl_ctx.execute_only && !repl_ctx.interactive) {
+    if (repl_ctx.input_file != NULL && !repl_ctx.interactive) {
 
         LOG("File-based execution mode is not implemented yet\n");
 
