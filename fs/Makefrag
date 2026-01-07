@@ -15,6 +15,8 @@ FSIMGTXTFILES :=	fs/newmotd \
 			fs/testshell.key \
 			fs/testshell.sh \
 			fs/test.bf \
+			fs/funny.bf \
+			fs/hanoi.bf \
 			fs/optimizers_test.bf \
 			fs/test_bytecode.bin \
 			fs/test_reverse.bf
