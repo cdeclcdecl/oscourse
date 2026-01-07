@@ -333,10 +333,26 @@ compile_bf_to_x86(void) {
     size_t cur = CODE_ENTRY_OFFSET; /* write position in bytes */
     size_t max_bytes = MAX_BF_MSG_LEN;
 
-    /* helpers for emitting bytes */
-    #define EMIT_B(b) do { if (cur + 1 > max_bytes) return -BF_ERR_OVERFLOW; compiler_ctx.code_buf[cur++] = (uint8_t)(b); } while (0)
-    #define EMIT_BYTES(src, n) do { if (cur + (n) > max_bytes) return -BF_ERR_OVERFLOW; memcpy(&compiler_ctx.code_buf[cur], (src), (n)); cur += (n); } while (0)
-    #define EMIT_IMM32(v) do { uint32_t _v = (uint32_t)(v); EMIT_B(_v & 0xff); EMIT_B((_v>>8)&0xff); EMIT_B((_v>>16)&0xff); EMIT_B((_v>>24)&0xff); } while (0)
+/* helpers for emitting bytes */
+#define EMIT_B(b)                                         \
+    do {                                                  \
+        if (cur + 1 > max_bytes) return -BF_ERR_OVERFLOW; \
+        compiler_ctx.code_buf[cur++] = (uint8_t)(b);      \
+    } while (0)
+#define EMIT_BYTES(src, n)                                  \
+    do {                                                    \
+        if (cur + (n) > max_bytes) return -BF_ERR_OVERFLOW; \
+        memcpy(&compiler_ctx.code_buf[cur], (src), (n));    \
+        cur += (n);                                         \
+    } while (0)
+#define EMIT_IMM32(v)                \
+    do {                             \
+        uint32_t _v = (uint32_t)(v); \
+        EMIT_B(_v & 0xff);           \
+        EMIT_B((_v >> 8) & 0xff);    \
+        EMIT_B((_v >> 16) & 0xff);   \
+        EMIT_B((_v >> 24) & 0xff);   \
+    } while (0)
 
     /* clear header */
     for (size_t i = 0; i < CODE_HEADER_SIZE; i++) compiler_ctx.code_buf[i] = 0;
@@ -348,7 +364,10 @@ compile_bf_to_x86(void) {
 
     for (size_t i = 0; i < compiler_ctx.src_len;) {
         char c = compiler_ctx.source[i];
-        if (is_space(c)) { i++; continue; }
+        if (is_space(c)) {
+            i++;
+            continue;
+        }
 
         /* -Otime optimizations */
         if (compiler_ctx.optimize_time && c == '[') {
@@ -359,7 +378,13 @@ compile_bf_to_x86(void) {
 
             if (try_opt_clear(compiler_ctx.source, compiler_ctx.src_len, &i)) {
                 /* emit helper CLEAR */
-                EMIT_B(0xBF); EMIT_IMM32(OP_CLEAR); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                EMIT_B(0xBF);
+                EMIT_IMM32(OP_CLEAR);
+                EMIT_B(0xBE);
+                EMIT_IMM32(0);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
                 LOG("Emit(opt): CLEAR\n");
                 continue;
             }
@@ -368,18 +393,29 @@ compile_bf_to_x86(void) {
             int16_t stride = 0;
             if (try_opt_seek(compiler_ctx.source, compiler_ctx.src_len, &i, &right, &stride)) {
                 /* Guard: check if cell is zero before entering loop */
-                EMIT_B(0xBF); EMIT_IMM32(OP_LOOP_START);
-                EMIT_B(0xBE); EMIT_IMM32(0);
-                EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-                EMIT_B(0x85); EMIT_B(0xC0);  /* test eax,eax */
-                EMIT_B(0x0F); EMIT_B(0x84);  /* je rel32 */
-                size_t je_disp_pos = cur; EMIT_IMM32(0);
-                
+                EMIT_B(0xBF);
+                EMIT_IMM32(OP_LOOP_START);
+                EMIT_B(0xBE);
+                EMIT_IMM32(0);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                EMIT_B(0x85);
+                EMIT_B(0xC0); /* test eax,eax */
+                EMIT_B(0x0F);
+                EMIT_B(0x84); /* je rel32 */
+                size_t je_disp_pos = cur;
+                EMIT_IMM32(0);
+
                 /* Emit SEEK with stride */
-                EMIT_B(0xBF); EMIT_IMM32(right ? OP_SEEK_RIGHT : OP_SEEK_LEFT);
-                EMIT_B(0xBE); EMIT_IMM32((uint32_t)stride);
-                EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-                
+                EMIT_B(0xBF);
+                EMIT_IMM32(right ? OP_SEEK_RIGHT : OP_SEEK_LEFT);
+                EMIT_B(0xBE);
+                EMIT_IMM32((uint32_t)stride);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+
                 /* Patch forward jump to point after SEEK */
                 size_t after_seek = cur;
                 int32_t forward_disp = (int32_t)((int32_t)after_seek - (int32_t)(je_disp_pos + 4));
@@ -388,7 +424,7 @@ compile_bf_to_x86(void) {
                 compiler_ctx.code_buf[je_disp_pos + 1] = (_fd >> 8) & 0xff;
                 compiler_ctx.code_buf[je_disp_pos + 2] = (_fd >> 16) & 0xff;
                 compiler_ctx.code_buf[je_disp_pos + 3] = (_fd >> 24) & 0xff;
-                
+
                 LOG("Emit(opt): SEEK_%s stride=%d\n", right ? "RIGHT" : "LEFT", stride);
                 continue;
             }
@@ -396,9 +432,13 @@ compile_bf_to_x86(void) {
             i = save;
             if (try_opt_move_add(compiler_ctx.source, compiler_ctx.src_len, &i, &off, &delta)) {
                 uint32_t packed = (uint32_t)BF_PACK_MOVE_ADD(off, delta);
-                EMIT_B(0xBF); EMIT_IMM32(OP_MOVE_ADD);
-                EMIT_B(0xBE); EMIT_IMM32(packed);
-                EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                EMIT_B(0xBF);
+                EMIT_IMM32(OP_MOVE_ADD);
+                EMIT_B(0xBE);
+                EMIT_IMM32(packed);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
                 LOG("Emit(opt): MOVE_ADD off=%d delta=%d\n", off, delta);
                 continue;
             }
@@ -411,17 +451,33 @@ compile_bf_to_x86(void) {
             int delta = 0;
             while (i < compiler_ctx.src_len) {
                 char d = compiler_ctx.source[i];
-                if (d == '>') { delta++; i++; }
-                else if (d == '<') { delta--; i++; }
-                else if (is_space(d)) { i++; }
-                else break;
+                if (d == '>') {
+                    delta++;
+                    i++;
+                } else if (d == '<') {
+                    delta--;
+                    i++;
+                } else if (is_space(d)) {
+                    i++;
+                } else
+                    break;
             }
             if (delta > 0) {
-                /* mov edi, OP_INC_PTR */ EMIT_B(0xBF); EMIT_IMM32(OP_INC_PTR);
-                /* mov esi, delta */ EMIT_B(0xBE); EMIT_IMM32(delta);
-                /* call qword ptr [rip+disp32] */ EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                /* mov edi, OP_INC_PTR */ EMIT_B(0xBF);
+                EMIT_IMM32(OP_INC_PTR);
+                /* mov esi, delta */ EMIT_B(0xBE);
+                EMIT_IMM32(delta);
+                /* call qword ptr [rip+disp32] */ EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             } else if (delta < 0) {
-                EMIT_B(0xBF); EMIT_IMM32(OP_DEC_PTR); EMIT_B(0xBE); EMIT_IMM32(-delta); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                EMIT_B(0xBF);
+                EMIT_IMM32(OP_DEC_PTR);
+                EMIT_B(0xBE);
+                EMIT_IMM32(-delta);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             }
             continue;
         }
@@ -430,48 +486,100 @@ compile_bf_to_x86(void) {
             int delta = 0;
             while (i < compiler_ctx.src_len) {
                 char d = compiler_ctx.source[i];
-                if (d == '+') { delta++; i++; }
-                else if (d == '-') { delta--; i++; }
-                else if (is_space(d)) { i++; }
-                else break;
+                if (d == '+') {
+                    delta++;
+                    i++;
+                } else if (d == '-') {
+                    delta--;
+                    i++;
+                } else if (is_space(d)) {
+                    i++;
+                } else
+                    break;
             }
             if (delta > 0) {
-                EMIT_B(0xBF); EMIT_IMM32(OP_INC_CELL); EMIT_B(0xBE); EMIT_IMM32(delta); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                EMIT_B(0xBF);
+                EMIT_IMM32(OP_INC_CELL);
+                EMIT_B(0xBE);
+                EMIT_IMM32(delta);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             } else if (delta < 0) {
-                EMIT_B(0xBF); EMIT_IMM32(OP_DEC_CELL); EMIT_B(0xBE); EMIT_IMM32(-delta); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                EMIT_B(0xBF);
+                EMIT_IMM32(OP_DEC_CELL);
+                EMIT_B(0xBE);
+                EMIT_IMM32(-delta);
+                EMIT_B(0xFF);
+                EMIT_B(0x15);
+                EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
             }
             continue;
         }
 
         switch (c) {
         case '.':
-            EMIT_B(0xBF); EMIT_IMM32(OP_OUTPUT); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-            i++; break;
+            EMIT_B(0xBF);
+            EMIT_IMM32(OP_OUTPUT);
+            EMIT_B(0xBE);
+            EMIT_IMM32(0);
+            EMIT_B(0xFF);
+            EMIT_B(0x15);
+            EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            i++;
+            break;
         case ',':
-            EMIT_B(0xBF); EMIT_IMM32(OP_INPUT); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-            i++; break;
+            EMIT_B(0xBF);
+            EMIT_IMM32(OP_INPUT);
+            EMIT_B(0xBE);
+            EMIT_IMM32(0);
+            EMIT_B(0xFF);
+            EMIT_B(0x15);
+            EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            i++;
+            break;
         case '[': {
             /* emit test helper */
-            EMIT_B(0xBF); EMIT_IMM32(OP_LOOP_START); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-            /* test eax,eax */ EMIT_B(0x85); EMIT_B(0xC0);
-            /* je rel32 (placeholder) */ EMIT_B(0x0F); EMIT_B(0x84); size_t je_disp_pos = cur; EMIT_IMM32(0);
+            EMIT_B(0xBF);
+            EMIT_IMM32(OP_LOOP_START);
+            EMIT_B(0xBE);
+            EMIT_IMM32(0);
+            EMIT_B(0xFF);
+            EMIT_B(0x15);
+            EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            /* test eax,eax */ EMIT_B(0x85);
+            EMIT_B(0xC0);
+            /* je rel32 (placeholder) */ EMIT_B(0x0F);
+            EMIT_B(0x84);
+            size_t je_disp_pos = cur;
+            EMIT_IMM32(0);
             size_t loop_body_start = cur; /* code after the je instruction */
-            if (loop_sp >= 256) { /* Check against local stack size, not global */
+            if (loop_sp >= 256) {         /* Check against local stack size, not global */
                 LOG("LOOP STACK OVERFLOW: loop_sp=%zu\n", loop_sp);
                 return -BF_ERR_OVERFLOW;
             }
             loop_body_stack[loop_sp] = loop_body_start;
             loop_je_pos_stack[loop_sp] = je_disp_pos;
             loop_sp++;
-            i++; break;
+            i++;
+            break;
         }
         case ']': {
             if (loop_sp == 0) return -BF_ERR_SYNTAX;
             /* emit test helper */
-            EMIT_B(0xBF); EMIT_IMM32(OP_LOOP_START); EMIT_B(0xBE); EMIT_IMM32(0); EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-            /* test eax,eax */ EMIT_B(0x85); EMIT_B(0xC0);
-            /* jne rel32 back to loop_body_start */ EMIT_B(0x0F); EMIT_B(0x85);
-            size_t back_disp_pos = cur; EMIT_IMM32(0);
+            EMIT_B(0xBF);
+            EMIT_IMM32(OP_LOOP_START);
+            EMIT_B(0xBE);
+            EMIT_IMM32(0);
+            EMIT_B(0xFF);
+            EMIT_B(0x15);
+            EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+            /* test eax,eax */ EMIT_B(0x85);
+            EMIT_B(0xC0);
+            /* jne rel32 back to loop_body_start */ EMIT_B(0x0F);
+            EMIT_B(0x85);
+            size_t back_disp_pos = cur;
+            EMIT_IMM32(0);
 
             /* compute back displacement and patch */
             size_t loop_body_start = loop_body_stack[loop_sp - 1];
@@ -494,10 +602,12 @@ compile_bf_to_x86(void) {
             compiler_ctx.code_buf[je_disp_pos + 3] = (_fd >> 24) & 0xff;
 
             loop_sp--;
-            i++; break;
+            i++;
+            break;
         }
         default:
-            i++; break;
+            i++;
+            break;
         }
     }
 

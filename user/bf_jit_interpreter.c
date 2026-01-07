@@ -343,17 +343,16 @@ parse_repl_arguments(int argc, char **argv) {
 }
 
 static int
-setup_exec_alias_mapping(size_t region_sz)
-{
+setup_exec_alias_mapping(size_t region_sz) {
     const uintptr_t candidates[] = {
-        (uintptr_t)EXECUTOR_CODE_ADDR + 0x100000,
-        (uintptr_t)EXECUTOR_CODE_ADDR + 0x200000,
-        (uintptr_t)EXECUTOR_CODE_ADDR + 0x300000,
-        0x00E00000,
-        0x00F00000,
+            (uintptr_t)EXECUTOR_CODE_ADDR + 0x100000,
+            (uintptr_t)EXECUTOR_CODE_ADDR + 0x200000,
+            (uintptr_t)EXECUTOR_CODE_ADDR + 0x300000,
+            0x00E00000,
+            0x00F00000,
     };
 
-    for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         uintptr_t va = candidates[i];
         if (va == (uintptr_t)EXECUTOR_CODE_ADDR) continue;
         if (sys_alloc_region(0, (void *)va, region_sz, PROT_RW | PROT_X) == 0) {
@@ -490,7 +489,7 @@ umain(int argc, char **argv) {
     } else { // standalone version. avoiding repl, ipc, compilers
 
 
-    #if !BF_EXECUTOR_IMPLEMENTED
+#if !BF_EXECUTOR_IMPLEMENTED
         LOG("Using local tape at %p\n", executor_ctx.tape);
 
         LOG("USING STANDALONE VERSION.\n");
@@ -551,10 +550,10 @@ umain(int argc, char **argv) {
 
         LOG("Execution COMPLETE.\n");
     }
-    # else
-    {
-        cprintf("Standalone mode is deprecated due to security reasons. Please use REPL mode instead.\n");
-        return;
-    } 
-    # endif
+#else
+        {
+            cprintf("Standalone mode is deprecated due to security reasons. Please use REPL mode instead.\n");
+            return;
+        }
+#endif
 }

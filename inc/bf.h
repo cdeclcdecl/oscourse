@@ -37,9 +37,9 @@ enum bf_exec_mode {
 #define MAX_BF_MSG_LEN (128 * PAGE_SIZE)                                   // Max BF message size per IPC message
 
 /* JIT code header layout placed at the start of the exec region. */
-#define CODE_HEADER_SIZE  (8) /* one qword: pointer to bf_exec_helper */
-#define CODE_HELPER_PTR_OFFSET (0) /* offset inside header to helper pointer */
-#define CODE_ENTRY_OFFSET (CODE_HEADER_SIZE) /* start of generated code (after header) */
+#define CODE_HEADER_SIZE       (8)                /* one qword: pointer to bf_exec_helper */
+#define CODE_HELPER_PTR_OFFSET (0)                /* offset inside header to helper pointer */
+#define CODE_ENTRY_OFFSET      (CODE_HEADER_SIZE) /* start of generated code (after header) */
 
 /*
  * IPC message magic numbers
