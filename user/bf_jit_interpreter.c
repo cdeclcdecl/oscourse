@@ -30,6 +30,12 @@ bf_executor_ctx_t executor_ctx = {
         .input_pos = 0,
 };
 
+// RW alias for JIT code pages (we always write/patch here)
+static uintptr_t exec_code_rw_addr = 0;
+
+// Address we actually execute from. Prefer EXECUTOR_CODE_ADDR as RX alias.
+static uintptr_t exec_code_exec_addr = (uintptr_t)EXECUTOR_CODE_ADDR;
+
 /* Make [addr, addr+size) executable and revoke write permission.
  * Returns 0 on success, <0 on error. Caller must ensure the code bytes
  * were copied into the pages BEFORE calling this. */
@@ -161,7 +167,8 @@ bf_exec_helper(int opcode, int arg) {
     if (executor_ctx.tape == NULL) {
         cprintf("bf_exec_helper: tape not initialized\n");
         executor_ctx.last_error = BF_ERR_EXECUTION;
-        return -BF_ERR_EXECUTION;
+        ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+        exit();
     }
 
     size_t ptr = executor_ctx.ptr_offset;
@@ -172,7 +179,8 @@ bf_exec_helper(int opcode, int arg) {
         if ((ptr + (size_t)arg) >= BF_TAPE_SIZE) {
             cprintf("bf_exec_helper: PTR out of bounds (right)\n");
             executor_ctx.last_error = BF_ERR_EXECUTION;
-            return -BF_ERR_EXECUTION;
+            ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+            exit();
         }
         ptr += (size_t)arg;
         break;
@@ -180,7 +188,8 @@ bf_exec_helper(int opcode, int arg) {
         if ((ptr < (size_t)arg) || (ptr - (size_t)arg) >= BF_TAPE_SIZE) {
             cprintf("bf_exec_helper: PTR out of bounds (left)\n");
             executor_ctx.last_error = BF_ERR_EXECUTION;
-            return -BF_ERR_EXECUTION;
+            ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+            exit();
         }
         ptr -= (size_t)arg;
         break;
@@ -220,7 +229,8 @@ bf_exec_helper(int opcode, int arg) {
             if (ptr + 1 >= BF_TAPE_SIZE) {
                 cprintf("bf_exec_helper: SEEK_RIGHT out of bounds\n");
                 executor_ctx.last_error = BF_ERR_EXECUTION;
-                return -BF_ERR_EXECUTION;
+                ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+                exit();
             }
             ptr++;
         }
@@ -231,7 +241,8 @@ bf_exec_helper(int opcode, int arg) {
             if (ptr == 0) {
                 cprintf("bf_exec_helper: SEEK_LEFT out of bounds\n");
                 executor_ctx.last_error = BF_ERR_EXECUTION;
-                return -BF_ERR_EXECUTION;
+                ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+                exit();
             }
             ptr--;
         }
@@ -246,7 +257,8 @@ bf_exec_helper(int opcode, int arg) {
         if (dst_idx < 0 || (size_t)dst_idx >= BF_TAPE_SIZE) {
             cprintf("bf_exec_helper: MOVE_ADD destination out of bounds off=%d\n", off);
             executor_ctx.last_error = BF_ERR_EXECUTION;
-            return -BF_ERR_EXECUTION;
+            ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+            exit();
         }
         size_t dst = (size_t)dst_idx;
         uint8_t v = tape[ptr];
@@ -260,7 +272,8 @@ bf_exec_helper(int opcode, int arg) {
     default:
         cprintf("bf_exec_helper: unknown opcode %d\n", opcode);
         executor_ctx.last_error = BF_ERR_EXECUTION;
-        return -BF_ERR_EXECUTION;
+        ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
+        exit();
     }
 
     executor_ctx.ptr_offset = ptr;
@@ -601,6 +614,52 @@ parse_repl_arguments(int argc, char **argv) {
     return 0;
 }
 
+static int
+setup_exec_alias_mapping(size_t region_sz)
+{
+    const uintptr_t candidates[] = {
+        (uintptr_t)EXECUTOR_CODE_ADDR + 0x100000,
+        (uintptr_t)EXECUTOR_CODE_ADDR + 0x200000,
+        (uintptr_t)EXECUTOR_CODE_ADDR + 0x300000,
+        0x00E00000,
+        0x00F00000,
+    };
+
+    for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+        uintptr_t va = candidates[i];
+        if (va == (uintptr_t)EXECUTOR_CODE_ADDR) continue;
+        if (sys_alloc_region(0, (void *)va, region_sz, PROT_RW | PROT_X) == 0) {
+            exec_code_rw_addr = va;
+            break;
+        }
+    }
+
+    // Fallback: if no free VA for RW alias, just run RWX at EXECUTOR_CODE_ADDR
+    if (exec_code_rw_addr == 0) {
+        int r = sys_alloc_region(0, (void *)EXECUTOR_CODE_ADDR, region_sz, PROT_RW | PROT_X);
+        if (r < 0) return r;
+        exec_code_rw_addr = (uintptr_t)EXECUTOR_CODE_ADDR;
+        exec_code_exec_addr = (uintptr_t)EXECUTOR_CODE_ADDR;
+        return 0;
+    }
+
+    // Map RW backing into EXECUTOR_CODE_ADDR as RO(+X) alias.
+    int r = sys_map_region(0,
+                           (void *)exec_code_rw_addr,
+                           0,
+                           (void *)EXECUTOR_CODE_ADDR,
+                           region_sz,
+                           (PROT_R | PROT_X));
+    if (r < 0) {
+        // If alias mapping fails, just execute from RW addr (no W^X), but keep it working.
+        exec_code_exec_addr = exec_code_rw_addr;
+        return 0;
+    }
+
+    exec_code_exec_addr = (uintptr_t)EXECUTOR_CODE_ADDR;
+    return 0;
+}
+
 void
 umain(int argc, char **argv) {
 
@@ -640,10 +699,11 @@ umain(int argc, char **argv) {
     }
 
     /* Allocate exec code area as separate region so W^X can be applied safely */
-    if (sys_alloc_region(0, (void *)EXECUTOR_CODE_ADDR, MAX_BF_MSG_LEN, PROT_RW | PROT_X) < 0) {
-        cprintf("bf_jit_interpreter: failed to allocate exec buffer(s) at %p\n", (void *)EXECUTOR_CODE_ADDR);
+    if (setup_exec_alias_mapping(MAX_BF_MSG_LEN) < 0) {
+        cprintf("bf_jit_interpreter: failed to setup exec mapping\n");
         return;
     }
+
 
     executor_ctx.code_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR); /* receive buffer */
     executor_ctx.input_buf = (uint8_t *)(EXECUTOR_TEMP_ADDR + MAX_BF_MSG_LEN);
@@ -659,8 +719,6 @@ umain(int argc, char **argv) {
             int perm = 0;
             LOG("waiting for compiled code from REPL\n");
 
-            WxorX((void *)EXECUTOR_CODE_ADDR, MAX_BF_MSG_LEN, WRITABLE);
-
             int32_t val = ipc_recv(&executor_ctx.repl_id, (void *)executor_ctx.code_buf, &executor_ctx.code_size, &perm);
             if (val < 0) {
                 cprintf("bf_jit_interpreter: ipc_recv error %d\n", val);
@@ -674,17 +732,11 @@ umain(int argc, char **argv) {
             }
 
             /* copy into exec area */
-            memcpy((void *)EXECUTOR_CODE_ADDR, (void *)executor_ctx.code_buf, executor_ctx.code_size);
+            memcpy((void *)exec_code_rw_addr, executor_ctx.code_buf, executor_ctx.code_size);
 
             /* install helper pointer into code header so JIT code can call back */
-            *(void **)((uintptr_t)EXECUTOR_CODE_ADDR + CODE_HELPER_PTR_OFFSET) = (void *)bf_exec_helper;
+            *(void **)((uintptr_t)exec_code_rw_addr + CODE_HELPER_PTR_OFFSET) = (void *)bf_exec_helper;
 
-            size_t code_page_bytes = ((executor_ctx.code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
-            if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, EXECUTABLE) < 0) {
-                cprintf("bf_jit_interpreter: failed to make exec pages executable\n");
-                ipc_send(executor_ctx.repl_id, -BF_ERR_EXECUTION, NULL, 0, 0);
-                continue;
-            }
 
             /* execute from exec area */
             uint8_t *prev_buf = executor_ctx.code_buf;
@@ -695,15 +747,10 @@ umain(int argc, char **argv) {
 
             LOG("Executing JIT-compiled code (calling entry point)...\n");
             executor_ctx.last_error = BF_SUCCESS;
-            void (*entry_fn)(void) = (void (*)(void))((uintptr_t)EXECUTOR_CODE_ADDR + CODE_ENTRY_OFFSET);
+            void (*entry_fn)(void) = (void (*)(void))((uintptr_t)exec_code_exec_addr + CODE_ENTRY_OFFSET);
             entry_fn();
             int res = (executor_ctx.last_error == BF_SUCCESS) ? BF_SUCCESS : executor_ctx.last_error;
             LOG("JIT-compiled code execution complete, res=%d\n", res);
-
-            /* revert exec pages to writable for next upload */
-            if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, WRITABLE) < 0) {
-                cprintf("bf_jit_interpreter: failed to revert exec pages to writable\n");
-            }
 
             /* restore receive buffer pointer */
             executor_ctx.code_buf = prev_buf;
@@ -743,32 +790,21 @@ umain(int argc, char **argv) {
         }
 
         /* copy into exec area */
-        memcpy((void *)EXECUTOR_CODE_ADDR, (void *)executor_ctx.code_buf, executor_ctx.code_size);
+        memcpy((void *)exec_code_rw_addr, executor_ctx.code_buf, executor_ctx.code_size);
 
         /* install helper pointer into code header */
-        *(void **)((uintptr_t)EXECUTOR_CODE_ADDR + CODE_HELPER_PTR_OFFSET) = (void *)bf_exec_helper;
+        *(void **)((uintptr_t)exec_code_rw_addr + CODE_HELPER_PTR_OFFSET) = (void *)bf_exec_helper;
 
-        size_t code_page_bytes = ((executor_ctx.code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
-
-        if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, EXECUTABLE) < 0) {
-            cprintf("bf_jit_interpreter: failed to make exec pages executable\n");
-            return;
-        }
 
         /* execute from exec area */
         uint8_t *prev_buf = executor_ctx.code_buf;
         executor_ctx.code_buf = (uint8_t *)EXECUTOR_CODE_ADDR;
 
         executor_ctx.last_error = BF_SUCCESS;
-        void (*entry_fn)(void) = (void (*)(void))((uintptr_t)EXECUTOR_CODE_ADDR + CODE_ENTRY_OFFSET);
+        void (*entry_fn)(void) = (void (*)(void))((uintptr_t)exec_code_exec_addr + CODE_ENTRY_OFFSET);
         entry_fn();
         if (executor_ctx.last_error != BF_SUCCESS) {
             cprintf("bf_jit_interpreter: JIT execution failed with %d\n", executor_ctx.last_error);
-        }
-
-        /* revert exec pages to writable for future uses */
-        if (WxorX((void *)EXECUTOR_CODE_ADDR, code_page_bytes, WRITABLE) < 0) {
-            cprintf("bf_jit_interpreter: failed to revert exec pages to writable\n");
         }
 
         executor_ctx.code_buf = prev_buf;

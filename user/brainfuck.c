@@ -482,13 +482,12 @@ file_based_usage(void) {
 
     int n = 0;
     int cur = 0;
-    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, MAX_BF_MSG_LEN - n)) > 0) {
+    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, PAGE_SIZE)) > 0) {
         n += cur;
-    }
-
-    if (n < 0) {
-        cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
-        err_exit();
+        if (n >= MAX_BF_MSG_LEN) {
+            cprintf("Error: Input file %s too large (max %lld bytes)\n", repl_ctx.input_file, MAX_BF_MSG_LEN);
+            err_exit();
+        }
     }
 
     repl_ctx.send_ipc_size = n;
@@ -530,10 +529,10 @@ complile_only_usage(void) {
     // send filename to compiler via IPC
 
     LOG("Reading Brainfuck source from file %s...\n", repl_ctx.input_file);
-    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
-    if (n < 0) {
-        cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
-        err_exit();
+    int n = 0;
+    int cur = 0;
+    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, PAGE_SIZE)) > 0) {
+        n += cur;
     }
 
     repl_ctx.send_ipc_size = n;
@@ -542,12 +541,11 @@ complile_only_usage(void) {
     send_to_compiler();
 
     int perm = 0;
-    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.send_ipc_size, &perm);
+    res = ipc_recv(&repl_ctx.compiler_id, repl_ctx.receive_ipc_buf, &repl_ctx.receive_ipc_size, &perm);
     if (res != BF_SUCCESS) {
         err_exit();
     }
-    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.send_ipc_size);
-
+    LOG("Received compiled bytecode of size %zu bytes from compiler\n", repl_ctx.receive_ipc_size);
     // write bytecode to output file
     int fd_out = open(repl_ctx.output_file, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd_out < 0) {
@@ -556,12 +554,16 @@ complile_only_usage(void) {
     }
     LOG("Opened output file descriptor %d\n", fd_out);
 
-    ssize_t written = write(fd_out, repl_ctx.receive_ipc_buf, repl_ctx.send_ipc_size);
-    if (written < 0 || (size_t)written != repl_ctx.send_ipc_size) {
-        cprintf("Error: Failed to write bytecode to output file %s\n", repl_ctx.output_file);
-        close(fd_out);
-        err_exit();
+    n = 0;
+    cur = 0;
+    while ((cur = write(fd_out, repl_ctx.receive_ipc_buf + n, repl_ctx.receive_ipc_size - n)) > 0) {
+        n += cur;
+        if (n >= MAX_BF_MSG_LEN) {
+            cprintf("Error: Input file %s too large (max %lld bytes)\n", repl_ctx.input_file, MAX_BF_MSG_LEN);
+            err_exit();
+        }
     }
+
     LOG("Wrote %zu bytes of bytecode to output file %s\n", repl_ctx.send_ipc_size, repl_ctx.output_file);
 
     close(fd_out);
@@ -581,11 +583,16 @@ execute_only_usage(void) {
     }
     LOG("Opened input file descriptor %d\n", repl_ctx.fd);
 
-    int n = read(repl_ctx.fd, repl_ctx.send_ipc_buf, MAX_BF_MSG_LEN);
-    if (n < 0) {
-        cprintf("Error: Failed to read input file %s\n", repl_ctx.input_file);
-        err_exit();
+    int n = 0;
+    int cur = 0;
+    while ((cur = read(repl_ctx.fd, repl_ctx.send_ipc_buf + n, PAGE_SIZE)) > 0) {
+        n += cur;
+        if (n >= MAX_BF_MSG_LEN) {
+            cprintf("Error: Input file %s too large (max %lld bytes)\n", repl_ctx.input_file, MAX_BF_MSG_LEN);
+            err_exit();
+        }
     }
+
 
     repl_ctx.send_ipc_size = n;
     LOG("Read %d bytes from input file\n", n);

@@ -606,7 +606,15 @@ umain(int argc, char **argv) {
         return;
     }
 
-    ssize_t n = read(fd_in, (void *)compiler_ctx.source, MAX_BF_MSG_LEN);
+    ssize_t cur = 0;
+    ssize_t n = 0;
+    while((cur = read(fd_in, (void *)compiler_ctx.source, MAX_BF_MSG_LEN)) > 0) {
+        n += cur;
+        if (n >= MAX_BF_MSG_LEN) {
+            cprintf("input file %s too large (max %lld bytes)\n", compiler_ctx.input_file, MAX_BF_MSG_LEN);
+            return;
+        }
+    }
     if (n < 0) {
         cprintf("failed to read input file %s\n", compiler_ctx.input_file);
         close(fd_in);
