@@ -507,17 +507,27 @@ umain(int argc, char **argv) {
             return;
         }
 
-        // read compiled code to buffer
-        ssize_t bytes_read = read(fd, executor_ctx.code_buf, MAX_BF_MSG_LEN);
-        if (bytes_read < 0) {
-            cprintf("Error: Cannot read from file %s\n", executor_ctx.input_file);
-            close(fd);
-            return;
+        /* read compiled code to buffer (handle partial reads) */
+        ssize_t nread = 0;
+        for (;;) {
+            ssize_t r = read(fd, executor_ctx.code_buf + nread, MAX_BF_MSG_LEN - nread);
+            if (r < 0) {
+                cprintf("Error: Cannot read from file %s\n", executor_ctx.input_file);
+                close(fd);
+                return;
+            }
+            if (r == 0) break; /* EOF */
+            nread += r;
+            if ((size_t)nread >= MAX_BF_MSG_LEN) {
+                cprintf("Error: Compiled code %s too large (max %lld bytes)\n", executor_ctx.input_file, MAX_BF_MSG_LEN);
+                close(fd);
+                return;
+            }
         }
 
         close(fd);
 
-        executor_ctx.code_size = bytes_read;
+        executor_ctx.code_size = (size_t)nread;
 
         LOG("Loaded compiled code from file, size: %zu bytes\n", executor_ctx.code_size);
 

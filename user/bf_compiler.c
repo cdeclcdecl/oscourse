@@ -618,19 +618,21 @@ umain(int argc, char **argv) {
         return;
     }
 
-    ssize_t cur = 0;
     ssize_t n = 0;
-    while((cur = read(fd_in, (void *)compiler_ctx.source, MAX_BF_MSG_LEN)) > 0) {
-        n += cur;
-        if (n >= MAX_BF_MSG_LEN) {
-            cprintf("input file %s too large (max %lld bytes)\n", compiler_ctx.input_file, MAX_BF_MSG_LEN);
+    for (;;) {
+        ssize_t cur = read(fd_in, (void *)(compiler_ctx.source + n), MAX_BF_MSG_LEN - n);
+        if (cur < 0) {
+            cprintf("failed to read input file %s\n", compiler_ctx.input_file);
+            close(fd_in);
             return;
         }
-    }
-    if (n < 0) {
-        cprintf("failed to read input file %s\n", compiler_ctx.input_file);
-        close(fd_in);
-        return;
+        if (cur == 0) break; /* EOF */
+        n += cur;
+        if ((size_t)n >= MAX_BF_MSG_LEN) {
+            cprintf("input file %s too large (max %lld bytes)\n", compiler_ctx.input_file, MAX_BF_MSG_LEN);
+            close(fd_in);
+            return;
+        }
     }
     close(fd_in);
 
@@ -648,11 +650,22 @@ umain(int argc, char **argv) {
         return;
     }
 
-    ssize_t written = write(fd_out, compiler_ctx.code_buf, compiler_ctx.code_offset);
-    if (written < 0 || (size_t)written != compiler_ctx.code_offset) {
-        cprintf("failed to write compiled code to %s\n", compiler_ctx.output_file);
-        close(fd_out);
-        return;
+    /* Ensure we write the entire buffer even if write() is partial */
+    size_t to_write = compiler_ctx.code_offset;
+    size_t written_total = 0;
+    while (written_total < to_write) {
+        ssize_t w = write(fd_out, compiler_ctx.code_buf + written_total, to_write - written_total);
+        if (w < 0) {
+            cprintf("failed to write compiled code to %s\n", compiler_ctx.output_file);
+            close(fd_out);
+            return;
+        }
+        if (w == 0) {
+            cprintf("failed to write compiled code to %s (zero bytes written)\n", compiler_ctx.output_file);
+            close(fd_out);
+            return;
+        }
+        written_total += (size_t)w;
     }
 
     close(fd_out);
