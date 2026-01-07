@@ -249,7 +249,7 @@ try_opt_clear(const char *s, size_t len, size_t *i) {
 }
 
 static bool
-try_opt_seek(const char *s, size_t len, size_t *i, bool *right) {
+try_opt_seek(const char *s, size_t len, size_t *i, bool *right, int16_t *stride) {
     // Matches: [>...] or [<...] where body is a non-empty run of only one direction, whitespace allowed
     size_t p = *i;
     if (p >= len || s[p] != '[') return false;
@@ -259,22 +259,23 @@ try_opt_seek(const char *s, size_t len, size_t *i, bool *right) {
     char dir = s[p];
     if (dir != '>' && dir != '<') return false;
 
-    bool any = false;
+    int count = 0;
     while (p < len) {
         char c = s[p];
         if (c == dir) {
-            any = true;
+            count++;
             p++;
         } else if (is_space(c)) {
             p++;
         } else
             break;
     }
-    if (!any) return false;
+    if (count <= 0 || count > 32767) return false;
     p = skip_spaces(s, len, p);
     if (p >= len || s[p] != ']') return false;
     p++;
     *right = (dir == '>');
+    *stride = (int16_t)count;
     *i = p;
     return true;
 }
@@ -376,11 +377,31 @@ compile_bf_to_x86(void) {
             }
 
             i = save;
-            if (try_opt_seek(compiler_ctx.source, compiler_ctx.src_len, &i, &right)) {
-                EMIT_B(0xBF); EMIT_IMM32(right ? OP_SEEK_RIGHT : OP_SEEK_LEFT);
+            int16_t stride = 0;
+            if (try_opt_seek(compiler_ctx.source, compiler_ctx.src_len, &i, &right, &stride)) {
+                /* Guard: check if cell is zero before entering loop */
+                EMIT_B(0xBF); EMIT_IMM32(OP_LOOP_START);
                 EMIT_B(0xBE); EMIT_IMM32(0);
                 EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
-                LOG("Emit(opt): SEEK_%s\n", right ? "RIGHT" : "LEFT");
+                EMIT_B(0x85); EMIT_B(0xC0);  /* test eax,eax */
+                EMIT_B(0x0F); EMIT_B(0x84);  /* je rel32 */
+                size_t je_disp_pos = cur; EMIT_IMM32(0);
+                
+                /* Emit SEEK with stride */
+                EMIT_B(0xBF); EMIT_IMM32(right ? OP_SEEK_RIGHT : OP_SEEK_LEFT);
+                EMIT_B(0xBE); EMIT_IMM32((uint32_t)stride);
+                EMIT_B(0xFF); EMIT_B(0x15); EMIT_IMM32((int32_t)(CODE_HELPER_PTR_OFFSET - (cur + 4)));
+                
+                /* Patch forward jump to point after SEEK */
+                size_t after_seek = cur;
+                int32_t forward_disp = (int32_t)((int32_t)after_seek - (int32_t)(je_disp_pos + 4));
+                uint32_t _fd = (uint32_t)forward_disp;
+                compiler_ctx.code_buf[je_disp_pos + 0] = _fd & 0xff;
+                compiler_ctx.code_buf[je_disp_pos + 1] = (_fd >> 8) & 0xff;
+                compiler_ctx.code_buf[je_disp_pos + 2] = (_fd >> 16) & 0xff;
+                compiler_ctx.code_buf[je_disp_pos + 3] = (_fd >> 24) & 0xff;
+                
+                LOG("Emit(opt): SEEK_%s stride=%d\n", right ? "RIGHT" : "LEFT", stride);
                 continue;
             }
 
@@ -447,7 +468,10 @@ compile_bf_to_x86(void) {
             /* test eax,eax */ EMIT_B(0x85); EMIT_B(0xC0);
             /* je rel32 (placeholder) */ EMIT_B(0x0F); EMIT_B(0x84); size_t je_disp_pos = cur; EMIT_IMM32(0);
             size_t loop_body_start = cur; /* code after the je instruction */
-            if (loop_sp >= sizeof(compiler_ctx.loop_stack) / sizeof(compiler_ctx.loop_stack[0])) return -BF_ERR_OVERFLOW;
+            if (loop_sp >= 256) { /* Check against local stack size, not global */
+                LOG("LOOP STACK OVERFLOW: loop_sp=%zu\n", loop_sp);
+                return -BF_ERR_OVERFLOW;
+            }
             loop_body_stack[loop_sp] = loop_body_start;
             loop_je_pos_stack[loop_sp] = je_disp_pos;
             loop_sp++;
@@ -606,15 +630,7 @@ umain(int argc, char **argv) {
         return;
     }
 
-    ssize_t cur = 0;
-    ssize_t n = 0;
-    while((cur = read(fd_in, (void *)compiler_ctx.source, MAX_BF_MSG_LEN)) > 0) {
-        n += cur;
-        if (n >= MAX_BF_MSG_LEN) {
-            cprintf("input file %s too large (max %lld bytes)\n", compiler_ctx.input_file, MAX_BF_MSG_LEN);
-            return;
-        }
-    }
+    ssize_t n = read(fd_in, (void *)compiler_ctx.source, MAX_BF_MSG_LEN);
     if (n < 0) {
         cprintf("failed to read input file %s\n", compiler_ctx.input_file);
         close(fd_in);

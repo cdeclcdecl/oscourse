@@ -225,26 +225,30 @@ bf_exec_helper(int opcode, int arg) {
         break;
 
     case OP_SEEK_RIGHT:
+        /* arg contains stride (how many cells to move per iteration) */
+        if (arg <= 0) arg = 1; /* safety fallback */
         while (tape[ptr] != 0) {
-            if (ptr + 1 >= BF_TAPE_SIZE) {
+            if (ptr + (size_t)arg >= BF_TAPE_SIZE) {
                 cprintf("bf_exec_helper: SEEK_RIGHT out of bounds\n");
                 executor_ctx.last_error = BF_ERR_EXECUTION;
                 ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
                 exit();
             }
-            ptr++;
+            ptr += (size_t)arg;
         }
         break;
 
     case OP_SEEK_LEFT:
+        /* arg contains stride (how many cells to move per iteration) */
+        if (arg <= 0) arg = 1; /* safety fallback */
         while (tape[ptr] != 0) {
-            if (ptr == 0) {
+            if (ptr < (size_t)arg) {
                 cprintf("bf_exec_helper: SEEK_LEFT out of bounds\n");
                 executor_ctx.last_error = BF_ERR_EXECUTION;
                 ipc_send(executor_ctx.repl_id, BF_ERR_EXECUTION, NULL, 0, 0);
                 exit();
             }
-            ptr--;
+            ptr -= (size_t)arg;
         }
         break;
 
@@ -491,29 +495,35 @@ interpret_bf_bytecode() {
             ip++;
             break;
 
-        case OP_SEEK_RIGHT:
-            LOG("interpret_bf_bytecode: SEEK_RIGHT\n");
+        case OP_SEEK_RIGHT: {
+            int stride = inst.arg;
+            if (stride <= 0) stride = 1;
+            LOG("interpret_bf_bytecode: SEEK_RIGHT stride=%d\n", stride);
             while (*ptr != 0) {
-                if (ptr + 1 >= tape + BF_TAPE_SIZE) {
+                if (ptr + stride >= tape + BF_TAPE_SIZE) {
                     cprintf("Error: Pointer out of bounds (right)\n");
                     return -BF_ERR_EXECUTION;
                 }
-                ptr++;
+                ptr += stride;
             }
             ip++;
             break;
+        }
 
-        case OP_SEEK_LEFT:
-            LOG("interpret_bf_bytecode: SEEK_LEFT\n");
+        case OP_SEEK_LEFT: {
+            int stride = inst.arg;
+            if (stride <= 0) stride = 1;
+            LOG("interpret_bf_bytecode: SEEK_LEFT stride=%d\n", stride);
             while (*ptr != 0) {
-                if (ptr <= tape) {
+                if (ptr - stride < tape) {
                     cprintf("Error: Pointer out of bounds (left)\n");
                     return -BF_ERR_EXECUTION;
                 }
-                ptr--;
+                ptr -= stride;
             }
             ip++;
             break;
+        }
 
         case OP_MOVE_ADD: {
             int16_t off = BF_UNPACK_MOVE_ADD_OFFSET(inst.arg);
@@ -535,8 +545,6 @@ interpret_bf_bytecode() {
             ip++;
             break;
         }
-
-            // --- optimized opcodes will be here ---
 
         default:
             cprintf("Unknown opcode: %d at ip: %zu\n", inst.opcode, ip);
