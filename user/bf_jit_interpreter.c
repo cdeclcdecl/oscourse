@@ -5,7 +5,6 @@
  *
  * CLI USAGE:
  *    bf_jit_interpreter [options] <input_file>
- *    <input_file>                 : Input file (optional)\n";
  *    --REPL                       : (Not shown in help message) REPL mode (waits for IPC)
  *    -h (--help)                  : Show this help message\n"
  *    -d (--debug)                 : Enable debug mode\n"
@@ -289,8 +288,7 @@ const char usage_msg[] =
         "Usage: bf_jit_interpreter [options]\n"
         "  -h (--help)                  : Show this help message\n"
         "  -d (--debug)                 : Enable debug mode\n"
-        "  -p (--print) <format>        : Set output format (ascii/hex/dec)\n"
-        "  <file>                       : Input file (optional)\n";
+        "  -p (--print) <format>        : Set output format (ascii/hex/dec)\n";
 
 /*
  * CLI ARGUMENT PARSER
@@ -335,13 +333,6 @@ parse_repl_arguments(int argc, char **argv) {
             // printing help message
             cprintf("%s", usage_msg);
             exit();
-        } else if (argv[i][0] != '-') {
-            // processing input file
-            if (executor_ctx.input_file != NULL) {
-                cprintf("Error: Only one input file can be specified\n\n");
-                return -1;
-            }
-            executor_ctx.input_file = argv[i];
         } else {
             cprintf("Error: Unknown argument: %s\n\n", argv[i]);
             return -1;
@@ -498,6 +489,8 @@ umain(int argc, char **argv) {
         }
     } else { // standalone version. avoiding repl, ipc, compilers
 
+
+    #if !BF_EXECUTOR_IMPLEMENTED
         LOG("Using local tape at %p\n", executor_ctx.tape);
 
         LOG("USING STANDALONE VERSION.\n");
@@ -558,4 +551,10 @@ umain(int argc, char **argv) {
 
         LOG("Execution COMPLETE.\n");
     }
+    # else
+    {
+        cprintf("Standalone mode is deprecated due to security reasons. Please use REPL mode instead.\n");
+        return;
+    } 
+    # endif
 }

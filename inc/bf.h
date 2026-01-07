@@ -9,9 +9,9 @@
 #include <inc/mmu.h>
 
 
-#define BF_REPL_IMPLEMENTED     0
-#define BF_COMPILER_IMPLEMENTED 0
-#define BF_EXECUTOR_IMPLEMENTED 0
+#define BF_REPL_IMPLEMENTED     1
+#define BF_COMPILER_IMPLEMENTED 1
+#define BF_EXECUTOR_IMPLEMENTED 1
 
 #define BF_COMPILER_FILE "bf_compiler"
 #define BF_EXECUTOR_FILE "bf_jit_interpreter"
